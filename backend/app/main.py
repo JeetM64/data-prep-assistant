@@ -25,7 +25,7 @@ from app.ml.fair_assessment import fair_assessment
 from app.ml.anomaly_detection import detect_anomalies
 from app.ml.pipeline_executor import execute_pipeline
 from app.ml.benchmark_engine import run_benchmark
-from app.ml.report_generator import generate_pdf_report
+from app.ml.generate_pdf_report import generate_pdf_report
 from app.ml.dataset_comparison import compare_datasets
 from app.ml.whatif_simulator import run_whatif_simulation
 from app.ml.nl_report_generator import generate_nl_report
