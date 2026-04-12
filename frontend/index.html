@@ -147,6 +147,26 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:13
 .ok-line{color:var(--green);font-weight:600;font-size:12px;}
 .info-table td:first-child{color:var(--muted);width:140px;}
 .info-table td:last-child{font-weight:500;}
+
+/* ── SAMPLE DATASETS ── */
+.samples-section{margin-top:28px;}
+.samples-label{font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;text-align:center;margin-bottom:12px;}
+.samples-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;}
+.sample-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:11px 13px;cursor:pointer;transition:all .15s;text-align:left;width:100%;}
+.sample-card:hover{border-color:var(--accent);background:var(--al);}
+.sample-card.active{border-color:var(--accent);background:var(--al);box-shadow:0 0 0 2px rgba(37,99,235,.15);}
+.sample-top{display:flex;align-items:center;gap:7px;margin-bottom:4px;}
+.sample-icon{font-size:15px;}
+.sample-name{font-size:12px;font-weight:600;color:var(--text);}
+.sample-tag{font-size:9px;padding:1px 6px;border-radius:3px;font-weight:700;font-family:var(--mono);margin-left:auto;}
+.tag-cls{background:var(--al);color:var(--accent);}
+.tag-reg{background:var(--gl);color:var(--green);}
+.tag-adv{background:var(--rl);color:var(--red);}
+.sample-desc{font-size:10px;color:var(--muted);line-height:1.4;}
+.sample-meta{font-size:10px;color:var(--muted);margin-top:3px;font-family:var(--mono);}
+.divider-or{display:flex;align-items:center;gap:10px;margin:18px 0 14px;color:var(--muted);font-size:11px;}
+.divider-or::before,.divider-or::after{content:'';flex:1;height:1px;background:var(--border);}
+.sample-loading{display:none;text-align:center;padding:8px;font-size:11px;color:var(--muted);}
 </style>
 </head>
 <body>
@@ -187,6 +207,74 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:13
     <span class="pill">FAIR assessment</span><span class="pill">Anomaly detection</span>
     <span class="pill">SHAP explainability</span><span class="pill">AutoML + Ensembles</span>
     <span class="pill">What-If simulator</span><span class="pill">PDF export</span>
+
+  <div class="samples-section">
+    <div class="samples-label">Or try a sample dataset</div>
+    <div class="samples-grid" id="samples-grid">
+
+      <button class="sample-card" onclick="loadSample('titanic')" id="sc-titanic">
+        <div class="sample-top">
+          <span class="sample-icon">🚢</span>
+          <span class="sample-name">Titanic</span>
+          <span class="sample-tag tag-cls">CLASS</span>
+        </div>
+        <div class="sample-desc">Survival prediction — missing values, mixed types, class imbalance</div>
+        <div class="sample-meta">891 rows · 12 cols · Grade expected: C</div>
+      </button>
+
+      <button class="sample-card" onclick="loadSample('iris')" id="sc-iris">
+        <div class="sample-top">
+          <span class="sample-icon">🌸</span>
+          <span class="sample-name">Iris</span>
+          <span class="sample-tag tag-cls">CLASS</span>
+        </div>
+        <div class="sample-desc">Classic 3-class flower classification — clean, well-structured dataset</div>
+        <div class="sample-meta">150 rows · 5 cols · Grade expected: A</div>
+      </button>
+
+      <button class="sample-card" onclick="loadSample('wine')" id="sc-wine">
+        <div class="sample-top">
+          <span class="sample-icon">🍷</span>
+          <span class="sample-name">Wine Quality</span>
+          <span class="sample-tag tag-cls">CLASS</span>
+        </div>
+        <div class="sample-desc">Red wine quality 0–10 — skewed features, class imbalance</div>
+        <div class="sample-meta">1599 rows · 12 cols · Grade expected: B</div>
+      </button>
+
+      <button class="sample-card" onclick="loadSample('diabetes')" id="sc-diabetes">
+        <div class="sample-top">
+          <span class="sample-icon">🏥</span>
+          <span class="sample-name">Diabetes</span>
+          <span class="sample-tag tag-cls">CLASS</span>
+        </div>
+        <div class="sample-desc">Pima Indian diabetes — zero values masking missing data, imbalance</div>
+        <div class="sample-meta">768 rows · 9 cols · Grade expected: B</div>
+      </button>
+
+      <button class="sample-card" onclick="loadSample('housing')" id="sc-housing">
+        <div class="sample-top">
+          <span class="sample-icon">🏠</span>
+          <span class="sample-name">Boston Housing</span>
+          <span class="sample-tag tag-reg">REG</span>
+        </div>
+        <div class="sample-desc">House price regression — outliers, skewed features, multicollinearity</div>
+        <div class="sample-meta">506 rows · 14 cols · Grade expected: B</div>
+      </button>
+
+      <button class="sample-card" onclick="loadSample('heart')" id="sc-heart">
+        <div class="sample-top">
+          <span class="sample-icon">❤️</span>
+          <span class="sample-name">Heart Disease</span>
+          <span class="sample-tag tag-cls">CLASS</span>
+        </div>
+        <div class="sample-desc">Cleveland heart disease — mixed types, missing values, binary target</div>
+        <div class="sample-meta">303 rows · 14 cols · Grade expected: B</div>
+      </button>
+
+    </div>
+    <div class="sample-loading" id="sample-loading">⏳ Loading dataset from source...</div>
+  </div>
   </div>
 </div>
 
@@ -699,6 +787,131 @@ fetch(API+'/health').then(r=>r.json()).then(()=>{
   document.getElementById('api-status').textContent='API Offline';
   document.getElementById('api-dot').classList.add('offline');
 });
+
+
+// ── SAMPLE DATASETS ──────────────────────────────────────────────────────────
+
+const SAMPLE_DATASETS = {
+  titanic: {
+    url: 'https://raw.githubusercontent.com/datasciencedojo/datasets/master/titanic.csv',
+    name: 'titanic.csv',
+    target: 'Survived',
+    label: 'Titanic Survival'
+  },
+  iris: {
+    url: 'https://raw.githubusercontent.com/mwaskom/seaborn-data/master/iris.csv',
+    name: 'iris.csv',
+    target: 'species',
+    label: 'Iris Flower'
+  },
+  wine: {
+    url: 'https://raw.githubusercontent.com/datasciencedojo/datasets/master/winequality-red.csv',
+    name: 'wine_quality.csv',
+    target: 'quality',
+    label: 'Wine Quality'
+  },
+  diabetes: {
+    url: 'https://raw.githubusercontent.com/jbrownlee/Datasets/master/pima-indians-diabetes.data.csv',
+    name: 'diabetes.csv',
+    target: null,
+    label: 'Diabetes'
+  },
+  housing: {
+    url: 'https://raw.githubusercontent.com/selva86/datasets/master/BostonHousing.csv',
+    name: 'boston_housing.csv',
+    target: 'medv',
+    label: 'Boston Housing'
+  },
+  heart: {
+    url: 'https://raw.githubusercontent.com/datasciencedojo/datasets/master/heart.csv',
+    name: 'heart_disease.csv',
+    target: 'target',
+    label: 'Heart Disease'
+  }
+};
+
+let activeSample = null;
+
+async function loadSample(key) {
+  const ds = SAMPLE_DATASETS[key];
+  if (!ds) return;
+
+  // Toggle off if already selected
+  if (activeSample === key) {
+    activeSample = null;
+    selectedFile = null;
+    document.querySelectorAll('.sample-card').forEach(c => c.classList.remove('active'));
+    document.getElementById('file-label').style.display = 'none';
+    document.getElementById('analyze-btn').disabled = true;
+    document.getElementById('target-col').value = '';
+    return;
+  }
+
+  // Deselect all cards
+  document.querySelectorAll('.sample-card').forEach(c => c.classList.remove('active'));
+  document.getElementById('sc-' + key).classList.add('active');
+  activeSample = key;
+
+  // Show loading indicator
+  const loadingEl = document.getElementById('sample-loading');
+  loadingEl.style.display = 'block';
+  loadingEl.textContent = '⏳ Fetching ' + ds.label + '...';
+
+  try {
+    const res = await fetch(ds.url);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const csvText = await res.text();
+
+    // Create a File object from the CSV text
+    const blob = new Blob([csvText], { type: 'text/csv' });
+    selectedFile = new File([blob], ds.name, { type: 'text/csv' });
+
+    // Set target column if known
+    if (ds.target) {
+      document.getElementById('target-col').value = ds.target;
+    } else {
+      document.getElementById('target-col').value = '';
+    }
+
+    // Update file label
+    const lbl = document.getElementById('file-label');
+    lbl.textContent = '✓ ' + ds.label + ' — ' + ds.name + ' (' + (csvText.length / 1024).toFixed(0) + ' KB)';
+    lbl.style.display = 'block';
+
+    // Enable analyze button
+    document.getElementById('analyze-btn').disabled = false;
+
+    loadingEl.textContent = '✓ ' + ds.label + ' ready — click Analyze';
+    loadingEl.style.color = 'var(--green)';
+
+    setTimeout(() => {
+      loadingEl.style.display = 'none';
+      loadingEl.style.color = 'var(--muted)';
+    }, 2500);
+
+  } catch (err) {
+    loadingEl.textContent = '✗ Failed to load. Check your internet connection.';
+    loadingEl.style.color = 'var(--red)';
+    document.getElementById('sc-' + key).classList.remove('active');
+    activeSample = null;
+    setTimeout(() => {
+      loadingEl.style.display = 'none';
+      loadingEl.style.color = 'var(--muted)';
+    }, 3000);
+  }
+}
+
+// Override resetAll to also clear sample selection
+const _origResetAll = resetAll;
+resetAll = function() {
+  _origResetAll();
+  activeSample = null;
+  document.querySelectorAll('.sample-card').forEach(c => c.classList.remove('active'));
+  const loadingEl = document.getElementById('sample-loading');
+  if (loadingEl) loadingEl.style.display = 'none';
+  document.getElementById('target-col').value = '';
+};
+
 </script>
 </body>
 </html>
