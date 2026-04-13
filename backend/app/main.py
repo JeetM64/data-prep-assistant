@@ -6,7 +6,7 @@ import pandas as pd
 import numpy as np
 import io
 
-from app.ml.feature_analysis import analyze_features
+from backend.app.ml.feature_analysis import analyze_features
 from app.ml.correlation_analysis import correlation_analysis
 from app.ml.preprocessing_suggestions import preprocessing_suggestions
 from app.ml.leakage_detection import detect_data_leakage
