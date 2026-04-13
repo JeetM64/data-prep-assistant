@@ -1,41 +1,40 @@
 from fastapi import FastAPI, UploadFile, File, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse, PlainTextResponse
+
 from typing import List
+
 import pandas as pd
 import numpy as np
 import io
 
-# ✅ FIXED IMPORTS (ALL CONSISTENT)
+from app.ml.feature_analysis import analyze_features
+from app.ml.correlation_analysis import correlation_analysis
+from app.ml.preprocessing_suggestions import preprocessing_suggestions
+from app.ml.leakage_detection import detect_data_leakage
+from app.ml.model_recommendation import recommend_model
+from app.ml.auto_training import auto_train
+from app.ml.cross_validation_engine import cross_validation_stability
+from app.ml.overfitting_detection import detect_overfitting
+from app.ml.feature_importance_engine import feature_importance_analysis
+from app.ml.cluster_intelligence import cluster_intelligence
+from app.ml.data_quality_score import dataset_quality_score
+from app.ml.feature_selection_engine import smart_feature_selection
+from app.ml.pipeline_builder import build_preprocessing_pipeline
+from app.ml.target_detection import detect_target_column
+from app.ml.explainability_engine import generate_explainability_report
+from app.ml.fair_assessment import fair_assessment
+from app.ml.anomaly_detection import detect_anomalies
+from app.ml.pipeline_executor import execute_pipeline
+from app.ml.benchmark_engine import run_benchmark
+from app.ml.generate_pdf_report import generate_pdf_report
+from app.ml.dataset_comparison import compare_datasets
+from app.ml.whatif_simulator import run_whatif_simulation
+from app.ml.nl_report_generator import generate_nl_report
+from app.ml.automl_optimizer import run_automl_optimization
+from app.ml.shap_explainability import run_shap_analysis
 
-from backend.app.ml.feature_analysis import analyze_features
-from backend.app.ml.correlation_analysis import correlation_analysis
-from backend.app.ml.preprocessing_suggestions import preprocessing_suggestions
-from backend.app.ml.leakage_detection import detect_data_leakage
-from backend.app.ml.model_recommendation import recommend_model
-from backend.app.ml.auto_training import auto_train
-from backend.app.ml.cross_validation_engine import cross_validation_stability
-from backend.app.ml.overfitting_detection import detect_overfitting
-from backend.app.ml.feature_importance_engine import feature_importance_analysis
-from backend.app.ml.cluster_intelligence import cluster_intelligence
-from backend.app.ml.data_quality_score import dataset_quality_score
-from backend.app.ml.feature_selection_engine import smart_feature_selection
-from backend.app.ml.pipeline_builder import build_preprocessing_pipeline
-from backend.app.ml.target_detection import detect_target_column
-from backend.app.ml.explainability_engine import generate_explainability_report
-from backend.app.ml.fair_assessment import fair_assessment
-from backend.app.ml.anomaly_detection import detect_anomalies
-from backend.app.ml.pipeline_executor import execute_pipeline
-from backend.app.ml.benchmark_engine import run_benchmark
-from backend.app.ml.generate_pdf_report import generate_pdf_report
-from backend.app.ml.dataset_comparison import compare_datasets
-from backend.app.ml.whatif_simulator import run_whatif_simulation
-from backend.app.ml.nl_report_generator import generate_nl_report
-from backend.app.ml.automl_optimizer import run_automl_optimization
-from backend.app.ml.shap_explainability import run_shap_analysis
-
-# utils
-from backend.app.utils import prepare_ml_dataset
+from app.utils import prepare_ml_dataset
 
 
 
