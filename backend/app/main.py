@@ -31,8 +31,10 @@ from app.ml.whatif_simulator import run_whatif_simulation
 from app.ml.nl_report_generator import generate_nl_report
 from app.ml.automl_optimizer import run_automl_optimization
 from app.ml.shap_explainability import run_shap_analysis
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.utils import prepare_ml_dataset
+
 
 
 def clean_for_json(obj):
