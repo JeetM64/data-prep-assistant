@@ -34,6 +34,8 @@ from app.ml.nl_report_generator import generate_nl_report
 from app.ml.automl_optimizer import run_automl_optimization
 from app.ml.shap_explainability import run_shap_analysis
 
+from app.db import reports_collection
+
 from app.utils import prepare_ml_dataset
 
 
@@ -175,15 +177,38 @@ async def upload_dataset(file: UploadFile = File(...), target_column: str = Quer
     """Full 18-module analysis. Returns complete JSON readiness report."""
     try:
         df = _load_df(file.file, file.filename)
-        if df is None: return JSONResponse({"error": "Unsupported format."})
-        if df.empty: return JSONResponse({"error": "Dataset is empty."})
-        if df.shape[1] < 2: return JSONResponse({"error": "Need at least 2 columns."})
+
+        if df is None:
+            return JSONResponse({"error": "Unsupported format."})
+        if df.empty:
+            return JSONResponse({"error": "Dataset is empty."})
+        if df.shape[1] < 2:
+            return JSONResponse({"error": "Need at least 2 columns."})
+
+        from datetime import datetime
+
+        # ✅ Run analysis
         result, _ = _run_full_analysis(df, target_column, file.filename)
-        if "error" in result: return JSONResponse(result)
+
+        if "error" in result:
+            return JSONResponse(result)
+
+        # 🔥 SAVE TO MONGODB
+        reports_collection.insert_one({
+            "filename": file.filename,
+            "result": clean_for_json(result),
+            "created_at": datetime.now()
+        })
+
+        # ✅ Return response
         return JSONResponse(content=clean_for_json(result))
+
     except Exception as e:
         import traceback
-        return JSONResponse({"error": str(e), "traceback": traceback.format_exc()[-800:]})
+        return JSONResponse({
+            "error": str(e),
+            "traceback": traceback.format_exc()[-800:]
+        })
 
 
 # ── ENDPOINT 2: EXECUTE PIPELINE ─────────────────────────────────────────────
@@ -467,3 +492,13 @@ async def shap_explainability(
     except Exception as e:
         import traceback
         return JSONResponse({"error": str(e), "traceback": traceback.format_exc()[-800:]})
+    
+@app.get("/test-db")
+def test_db():
+    reports_collection.insert_one({"test": "working"})
+    return {"status": "MongoDB connected"}
+
+@app.get("/reports")
+def get_reports():
+    data = list(reports_collection.find({}, {"_id": 0}))
+    return data
