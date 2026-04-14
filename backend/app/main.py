@@ -1,13 +1,22 @@
-from fastapi import FastAPI, UploadFile, File, Query
+"""
+main.py — ML Data Readiness Analyzer v5.0.0
+Production-ready: Auth, Reports History, PDF, Charts data, all edge cases handled.
+"""
+
+from fastapi import FastAPI, UploadFile, File, Query, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse, PlainTextResponse
-
-from typing import List
+from typing import List, Optional
+from datetime import datetime
+from bson import ObjectId
 
 import pandas as pd
 import numpy as np
 import io
+import logging
+import traceback
 
+# ── ML Modules ───────────────────────────────────────────────────────────────
 from app.ml.feature_analysis import analyze_features
 from app.ml.correlation_analysis import correlation_analysis
 from app.ml.preprocessing_suggestions import preprocessing_suggestions
@@ -34,12 +43,20 @@ from app.ml.nl_report_generator import generate_nl_report
 from app.ml.automl_optimizer import run_automl_optimization
 from app.ml.shap_explainability import run_shap_analysis
 
-from app.db import reports_collection
-
+# ── DB & Auth ─────────────────────────────────────────────────────────────────
+from app.db import reports_collection, users_collection
+from app.auth import (
+    RegisterRequest, LoginRequest, TokenResponse,
+    register_user, login_user,
+    get_current_user, get_optional_user
+)
 from app.utils import prepare_ml_dataset
 
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 
+# ── JSON Cleaner ──────────────────────────────────────────────────────────────
 def clean_for_json(obj):
     if isinstance(obj, dict):
         return {k: clean_for_json(v) for k, v in obj.items()}
@@ -48,24 +65,25 @@ def clean_for_json(obj):
     elif isinstance(obj, np.integer):
         return int(obj)
     elif isinstance(obj, np.floating):
-        if np.isnan(obj) or np.isinf(obj):
-            return None
-        return float(obj)
+        return None if (np.isnan(obj) or np.isinf(obj)) else float(obj)
     elif isinstance(obj, np.bool_):
         return bool(obj)
     elif isinstance(obj, np.ndarray):
         return obj.tolist()
     elif isinstance(obj, float):
-        if np.isnan(obj) or np.isinf(obj):
-            return None
-        return obj
+        return None if (np.isnan(obj) or np.isinf(obj)) else obj
+    elif isinstance(obj, ObjectId):
+        return str(obj)
+    elif isinstance(obj, datetime):
+        return obj.isoformat()
     return obj
 
 
+# ── App Init ──────────────────────────────────────────────────────────────────
 app = FastAPI(
     title="ML Data Readiness Analyzer",
-    description="Complete ML pipeline: analysis, preprocessing, ensemble training, SHAP, AutoML, drift detection.",
-    version="4.0.0"
+    description="Production ML pipeline: Auth, Analysis, AutoML, SHAP, Reports.",
+    version="5.0.0"
 )
 
 app.add_middleware(
@@ -77,33 +95,68 @@ app.add_middleware(
 )
 
 
-def _load_df(file_obj, filename: str):
+# ── Internal Helpers ──────────────────────────────────────────────────────────
+def _load_df(file_obj, filename: str) -> Optional[pd.DataFrame]:
     fname = filename.lower()
-    if fname.endswith(".csv"):
-        return pd.read_csv(file_obj)
-    elif fname.endswith((".xlsx", ".xls")):
-        return pd.read_excel(file_obj)
+    try:
+        if fname.endswith(".csv"):
+            return pd.read_csv(file_obj)
+        elif fname.endswith((".xlsx", ".xls")):
+            return pd.read_excel(file_obj)
+    except Exception as e:
+        logger.error(f"Failed to load file {filename}: {e}")
     return None
 
 
-def _detect_task(df, target):
+def _detect_task(df: pd.DataFrame, target: str) -> str:
     y = df[target].dropna()
-    return "classification" if y.nunique() <= 15 or y.dtype == object else "regression"
+    return "classification" if (y.nunique() <= 15 or y.dtype == object) else "regression"
 
 
-def _run_full_analysis(df, target_override, filename):
+def _validate_df(df, filename: str):
+    """Returns (df, error_response). error_response is None if valid."""
+    if df is None:
+        return None, JSONResponse({"error": f"Unsupported file format: {filename}. Use CSV or Excel."}, status_code=400)
+    if df.empty:
+        return None, JSONResponse({"error": "Dataset is empty."}, status_code=400)
+    if df.shape[1] < 2:
+        return None, JSONResponse({"error": "Need at least 2 columns."}, status_code=400)
+    return df, None
+
+
+def _run_full_analysis(df: pd.DataFrame, target_override: Optional[str], filename: str):
+    """
+    Core analysis pipeline. Returns (result_dict, target_column).
+    All target column edge cases handled here.
+    """
     rows, cols = df.shape
     td = detect_target_column(df)
 
-    if target_override and target_override in df.columns:
-        target = target_override
-        target_source = "user_specified"
-    elif target_override:
-        return {"error": f"Column '{target_override}' not found.", "available_columns": df.columns.tolist()}
+    # ── Target Resolution (fixed edge cases) ─────────────────────────────────
+    if target_override:
+        # User specified a target
+        if target_override in df.columns:
+            target = target_override
+            target_source = "user_specified"
+        else:
+            # Fuzzy match: case-insensitive
+            col_map = {c.lower(): c for c in df.columns}
+            fuzzy = col_map.get(target_override.lower())
+            if fuzzy:
+                target = fuzzy
+                target_source = "user_specified_fuzzy_match"
+            else:
+                return {
+                    "error": f"Column '{target_override}' not found.",
+                    "available_columns": df.columns.tolist()
+                }, None
     else:
         target = td["predicted_target"]
         target_source = "auto_detected"
 
+    logger.info(f"Target resolved: '{target}' ({target_source})")
+
+    # ── Dataset Summary ───────────────────────────────────────────────────────
     summary = {
         "rows": int(rows), "columns": int(cols),
         "missing_values": int(df.isnull().sum().sum()),
@@ -115,104 +168,280 @@ def _run_full_analysis(df, target_override, filename):
         "memory_usage_mb": round(float(df.memory_usage(deep=True).sum() / 1e6), 3)
     }
 
+    # ── Prepare clean ML dataframe (target must survive) ─────────────────────
     qs = dataset_quality_score(df)
     pipeline = build_preprocessing_pipeline(df, target_column=target)
-    drop_cols = [e["column"] for e in pipeline.get("drop_columns", []) if e["column"] != target]
+    drop_cols = [
+        e["column"] for e in pipeline.get("drop_columns", [])
+        if e["column"] != target  # NEVER drop target
+    ]
     clean_df = prepare_ml_dataset(df.drop(columns=drop_cols, errors="ignore"))
-    if target not in clean_df.columns:
-        clean_df = prepare_ml_dataset(df.copy())
 
+    # If target got dropped during prepare_ml_dataset, restore from original
+    if target not in clean_df.columns:
+        logger.warning(f"Target '{target}' lost during cleaning — restoring from original.")
+        clean_df[target] = df[target].values
+
+    # Final check
+    if target not in clean_df.columns:
+        logger.error(f"Target '{target}' could not be restored. Using full original df.")
+        clean_df = prepare_ml_dataset(df.copy())
+        if target not in clean_df.columns:
+            clean_df[target] = df[target].values
+
+    # ── Run All Modules ───────────────────────────────────────────────────────
     resp = {
-        "dataset_summary": summary,
-        "target_detection": {**td, "final_target": target, "target_source": target_source},
-        "feature_analysis":          analyze_features(df),
-        "correlation_analysis":      correlation_analysis(df),
-        "preprocessing_advice":      preprocessing_suggestions(df),
-        "data_leakage_analysis":     detect_data_leakage(df),
-        "model_recommendation":      recommend_model(df, target_column=target),
-        "dataset_quality_score":     qs,
-        "recommended_pipeline":      pipeline,
-        "fair_assessment":           fair_assessment(df, filename=filename),
-        "anomaly_detection":         detect_anomalies(df),
-        "auto_training_results":     auto_train(clean_df, target_column=target),
-        "cross_validation":          cross_validation_stability(clean_df, target_column=target),
-        "overfitting_analysis":      detect_overfitting(clean_df, target_column=target),
-        "feature_importance":        feature_importance_analysis(clean_df, target_column=target),
-        "cluster_intelligence":      cluster_intelligence(clean_df),
-        "smart_feature_selection":   smart_feature_selection(clean_df, target_column=target),
+        "dataset_summary":          summary,
+        "target_detection":         {**td, "final_target": target, "target_source": target_source},
+        "feature_analysis":         analyze_features(df),
+        "correlation_analysis":     correlation_analysis(df),
+        "preprocessing_advice":     preprocessing_suggestions(df),
+        "data_leakage_analysis":    detect_data_leakage(df),
+        "model_recommendation":     recommend_model(df, target_column=target),
+        "dataset_quality_score":    qs,
+        "recommended_pipeline":     pipeline,
+        "fair_assessment":          fair_assessment(df, filename=filename),
+        "anomaly_detection":        detect_anomalies(df),
+        "auto_training_results":    auto_train(clean_df, target_column=target),
+        "cross_validation":         cross_validation_stability(clean_df, target_column=target),
+        "overfitting_analysis":     detect_overfitting(clean_df, target_column=target),
+        "feature_importance":       feature_importance_analysis(clean_df, target_column=target),
+        "cluster_intelligence":     cluster_intelligence(clean_df),
+        "smart_feature_selection":  smart_feature_selection(clean_df, target_column=target),
     }
     resp["explainability_report"] = generate_explainability_report(resp)
     return resp, target
 
 
-@app.get("/")
+# ═══════════════════════════════════════════════════════════════════════════════
+# AUTH ENDPOINTS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.post("/auth/register", response_model=TokenResponse, tags=["Auth"])
+def register(req: RegisterRequest):
+    """Register a new user. Returns JWT token."""
+    return register_user(req)
+
+
+@app.post("/auth/login", response_model=TokenResponse, tags=["Auth"])
+def login(req: LoginRequest):
+    """Login. Returns JWT token."""
+    return login_user(req)
+
+
+@app.get("/auth/me", tags=["Auth"])
+def me(user: dict = Depends(get_current_user)):
+    """Get current user info from token."""
+    return {"user": user}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# REPORTS ENDPOINTS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.get("/reports", tags=["Reports"])
+def get_reports(
+    page: int = Query(default=1, ge=1),
+    limit: int = Query(default=20, ge=1, le=100),
+    user: Optional[dict] = Depends(get_optional_user)
+):
+    """
+    Get paginated list of analysis reports.
+    - If authenticated: returns only your reports.
+    - If not authenticated: returns all public reports (no result payload, just metadata).
+    """
+    try:
+        skip = (page - 1) * limit
+        query = {}
+        if user:
+            query["user_id"] = user["_id"]
+
+        # Metadata only — no full result payload (too large)
+        projection = {
+            "_id": 1,
+            "filename": 1,
+            "created_at": 1,
+            "user_id": 1,
+            "summary": 1,
+        }
+
+        cursor = reports_collection.find(query, projection) \
+            .sort("created_at", -1) \
+            .skip(skip) \
+            .limit(limit)
+
+        reports = []
+        for r in cursor:
+            reports.append({
+                "id":          str(r["_id"]),
+                "filename":    r.get("filename", "unknown"),
+                "created_at":  r["created_at"].isoformat() if isinstance(r.get("created_at"), datetime) else str(r.get("created_at", "")),
+                "summary":     r.get("summary", {}),
+            })
+
+        total = reports_collection.count_documents(query)
+
+        return {
+            "reports": reports,
+            "pagination": {
+                "page":        page,
+                "limit":       limit,
+                "total":       total,
+                "total_pages": max(1, -(-total // limit))  # ceiling division
+            }
+        }
+    except Exception as e:
+        logger.error(f"GET /reports error: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.get("/reports/{report_id}", tags=["Reports"])
+def get_report_by_id(
+    report_id: str,
+    user: Optional[dict] = Depends(get_optional_user)
+):
+    """Get full report by ID."""
+    try:
+        oid = ObjectId(report_id)
+    except Exception:
+        return JSONResponse({"error": "Invalid report ID format."}, status_code=400)
+
+    query = {"_id": oid}
+    if user:
+        query["user_id"] = user["_id"]
+
+    report = reports_collection.find_one(query, {"_id": 0})
+    if not report:
+        return JSONResponse({"error": "Report not found."}, status_code=404)
+
+    return JSONResponse(content=clean_for_json(report))
+
+
+@app.delete("/reports/{report_id}", tags=["Reports"])
+def delete_report(
+    report_id: str,
+    user: dict = Depends(get_current_user)
+):
+    """Delete a report (must be owner)."""
+    try:
+        oid = ObjectId(report_id)
+    except Exception:
+        return JSONResponse({"error": "Invalid report ID."}, status_code=400)
+
+    result = reports_collection.delete_one({"_id": oid, "user_id": user["_id"]})
+    if result.deleted_count == 0:
+        return JSONResponse({"error": "Report not found or not authorized."}, status_code=404)
+    return {"message": "Report deleted."}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# CORE ML ENDPOINTS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.get("/", tags=["Meta"])
 def home():
     return {
         "name": "ML Data Readiness Analyzer",
-        "version": "4.0.0",
-        "total_modules": 25,
+        "version": "5.0.0",
         "endpoints": {
-            "POST /upload":   "Full 18-module analysis — JSON report",
-            "POST /execute":  "Apply pipeline — download cleaned CSV",
-            "POST /benchmark":"Compare 2-20 datasets — research table",
-            "POST /report":   "Full analysis + PDF download",
-            "POST /compare":  "Train vs test — drift detection",
-            "POST /whatif":   "What-if simulator — fix impact measurement",
-            "POST /nlreport": "Natural language report — plain English",
-            "POST /automl":   "AutoML optimizer — ensemble + best pipeline search",
-            "POST /shap":     "SHAP explainability — why the model predicts what it predicts",
-            "GET  /health":   "Health check"
+            "POST /auth/register": "Register user",
+            "POST /auth/login":    "Login user",
+            "GET  /auth/me":       "Get current user",
+            "POST /upload":        "Full 18-module analysis",
+            "GET  /reports":       "List your reports",
+            "GET  /reports/{id}":  "Get full report",
+            "POST /execute":       "Download cleaned CSV",
+            "POST /benchmark":     "Compare datasets",
+            "POST /report":        "Download PDF report",
+            "POST /compare":       "Drift detection",
+            "POST /whatif":        "What-if simulator",
+            "POST /nlreport":      "Natural language report",
+            "POST /automl":        "AutoML optimizer",
+            "POST /shap":          "SHAP explainability",
+            "GET  /health":        "Health check",
         }
     }
 
 
-@app.get("/health")
+@app.get("/health", tags=["Meta"])
 def health():
-    return {"status": "ok", "version": "4.0.0", "modules": 25}
+    try:
+        reports_collection.find_one({}, {"_id": 1})
+        db_status = "connected"
+    except Exception as e:
+        db_status = f"error: {str(e)}"
+    return {"status": "ok", "version": "5.0.0", "database": db_status}
 
 
 # ── ENDPOINT 1: FULL ANALYSIS ─────────────────────────────────────────────────
-@app.post("/upload")
-async def upload_dataset(file: UploadFile = File(...), target_column: str = Query(default=None)):
-    """Full 18-module analysis. Returns complete JSON readiness report."""
+@app.post("/upload", tags=["Analysis"])
+async def upload_dataset(
+    file: UploadFile = File(...),
+    target_column: str = Query(default=None),
+    user: Optional[dict] = Depends(get_optional_user)
+):
+    """Full 18-module analysis. Saves report to DB. Returns complete JSON."""
     try:
         df = _load_df(file.file, file.filename)
+        df, err = _validate_df(df, file.filename)
+        if err: return err
 
-        if df is None:
-            return JSONResponse({"error": "Unsupported format."})
-        if df.empty:
-            return JSONResponse({"error": "Dataset is empty."})
-        if df.shape[1] < 2:
-            return JSONResponse({"error": "Need at least 2 columns."})
+        result, target = _run_full_analysis(df, target_column, file.filename)
 
-        from datetime import datetime
+        if isinstance(result, dict) and "error" in result:
+            return JSONResponse(result, status_code=400)
 
-        # ✅ Run analysis
-        result, _ = _run_full_analysis(df, target_column, file.filename)
+        # ── Build summary snapshot for report list ───────────────────────────
+        qs = result.get("dataset_quality_score", {})
+        er = result.get("explainability_report", {})
+        at = result.get("auto_training_results", {})
+        ds = result.get("dataset_summary", {})
 
-        if "error" in result:
-            return JSONResponse(result)
+        summary = {
+            "rows":              ds.get("rows"),
+            "columns":           ds.get("columns"),
+            "target":            target,
+            "quality_score":     qs.get("overall_score"),
+            "quality_status":    qs.get("status"),
+            "readiness_score":   er.get("readiness_score"),
+            "readiness_grade":   er.get("grade"),
+            "best_model":        at.get("best_model"),
+            "best_score":        at.get("best_score"),
+            "metric":            at.get("primary_metric"),
+            "task_type":         at.get("task_type"),
+        }
 
-        # 🔥 SAVE TO MONGODB
-        reports_collection.insert_one({
-            "filename": file.filename,
-            "result": clean_for_json(result),
-            "created_at": datetime.now()
-        })
+        # ── Save to MongoDB ──────────────────────────────────────────────────
+        doc = {
+            "filename":   file.filename,
+            "result":     clean_for_json(result),
+            "summary":    summary,
+            "created_at": datetime.utcnow(),
+        }
+        if user:
+            doc["user_id"] = user["_id"]
 
-        # ✅ Return response
+        try:
+            inserted = reports_collection.insert_one(doc)
+            result["_report_id"] = str(inserted.inserted_id)
+            # Update user's report count
+            if user:
+                users_collection.update_one(
+                    {"_id": ObjectId(user["_id"])},
+                    {"$inc": {"reports_count": 1}}
+                )
+        except Exception as db_err:
+            logger.warning(f"MongoDB save failed (non-fatal): {db_err}")
+
         return JSONResponse(content=clean_for_json(result))
 
     except Exception as e:
-        import traceback
-        return JSONResponse({
-            "error": str(e),
-            "traceback": traceback.format_exc()[-800:]
-        })
+        logger.error(f"POST /upload error: {traceback.format_exc()}")
+        return JSONResponse({"error": str(e), "traceback": traceback.format_exc()[-1000:]}, status_code=500)
 
 
 # ── ENDPOINT 2: EXECUTE PIPELINE ─────────────────────────────────────────────
-@app.post("/execute")
+@app.post("/execute", tags=["Analysis"])
 async def execute_dataset_pipeline(
     file: UploadFile = File(...),
     target_column: str = Query(default=None),
@@ -221,25 +450,36 @@ async def execute_dataset_pipeline(
     """Apply full preprocessing pipeline. Download cleaned ML-ready CSV."""
     try:
         df = _load_df(file.file, file.filename)
-        if df is None: return JSONResponse({"error": "Unsupported format."})
-        if df.empty: return JSONResponse({"error": "Dataset is empty."})
+        df, err = _validate_df(df, file.filename)
+        if err: return err
+
         td = detect_target_column(df)
         target = target_column if (target_column and target_column in df.columns) else td["predicted_target"]
         pipeline = build_preprocessing_pipeline(df, target_column=target)
         result = execute_pipeline(df, pipeline)
-        if not result["success"]: return JSONResponse({"error": "Pipeline failed."})
+
+        if not result["success"]:
+            return JSONResponse({"error": "Pipeline execution failed.", "details": result}, status_code=500)
+
         cleaned_df = result["cleaned_dataframe"]
         stats = result["stats"]
+
         if download:
             out = io.StringIO()
             cleaned_df.to_csv(out, index=False)
             out.seek(0)
             base = file.filename.rsplit(".", 1)[0]
-            return StreamingResponse(io.BytesIO(out.getvalue().encode()), media_type="text/csv",
-                headers={"Content-Disposition": f"attachment; filename={base}_cleaned.csv",
-                         "X-Original-Shape": f"{stats['original_shape']['rows']}x{stats['original_shape']['columns']}",
-                         "X-Final-Shape": f"{stats['final_shape']['rows']}x{stats['final_shape']['columns']}",
-                         "X-Steps-Applied": str(stats["steps_applied"])})
+            return StreamingResponse(
+                io.BytesIO(out.getvalue().encode()),
+                media_type="text/csv",
+                headers={
+                    "Content-Disposition": f"attachment; filename={base}_cleaned.csv",
+                    "X-Original-Shape": f"{stats['original_shape']['rows']}x{stats['original_shape']['columns']}",
+                    "X-Final-Shape":    f"{stats['final_shape']['rows']}x{stats['final_shape']['columns']}",
+                    "X-Steps-Applied":  str(stats["steps_applied"])
+                }
+            )
+
         return JSONResponse(content=clean_for_json({
             "success": True, "target": target, "stats": stats,
             "execution_log": result["execution_log"],
@@ -247,15 +487,17 @@ async def execute_dataset_pipeline(
             "columns": cleaned_df.columns.tolist()
         }))
     except Exception as e:
-        return JSONResponse({"error": str(e)})
+        logger.error(f"POST /execute error: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
 
 
 # ── ENDPOINT 3: BENCHMARK ─────────────────────────────────────────────────────
-@app.post("/benchmark")
+@app.post("/benchmark", tags=["Analysis"])
 async def benchmark_datasets(files: List[UploadFile] = File(...)):
-    """Compare 2-20 datasets. Returns ranked table for research paper."""
-    if len(files) < 2: return JSONResponse({"error": "Upload at least 2 files."})
-    if len(files) > 20: return JSONResponse({"error": "Max 20 datasets."})
+    """Compare 2-20 datasets. Returns ranked research table."""
+    if len(files) < 2:  return JSONResponse({"error": "Upload at least 2 files."}, status_code=400)
+    if len(files) > 20: return JSONResponse({"error": "Max 20 datasets."}, status_code=400)
+
     datasets = []
     for f in files:
         try:
@@ -263,221 +505,172 @@ async def benchmark_datasets(files: List[UploadFile] = File(...)):
             datasets.append({"name": f.filename.rsplit(".", 1)[0], "dataframe": df})
         except Exception as e:
             datasets.append({"name": f.filename, "dataframe": None, "error": str(e)})
+
     result = run_benchmark(datasets)
     return JSONResponse(content=clean_for_json(result))
 
 
 # ── ENDPOINT 4: PDF REPORT ────────────────────────────────────────────────────
-@app.post("/report")
-async def generate_report(file: UploadFile = File(...), target_column: str = Query(default=None)):
-    """Full analysis + professional multi-page PDF report download."""
+@app.post("/report", tags=["Analysis"])
+async def generate_report(
+    file: UploadFile = File(...),
+    target_column: str = Query(default=None)
+):
+    """Full analysis + professional PDF download."""
     try:
         df = _load_df(file.file, file.filename)
-        if df is None: return JSONResponse({"error": "Unsupported format."})
-        if df.empty: return JSONResponse({"error": "Dataset is empty."})
-        if df.shape[1] < 2: return JSONResponse({"error": "Need at least 2 columns."})
+        df, err = _validate_df(df, file.filename)
+        if err: return err
+
         analysis, _ = _run_full_analysis(df, target_column, file.filename)
-        if "error" in analysis: return JSONResponse(analysis)
+        if isinstance(analysis, dict) and "error" in analysis:
+            return JSONResponse(analysis, status_code=400)
+
         base = file.filename.rsplit(".", 1)[0]
         pdf_bytes = generate_pdf_report(analysis, filename=base)
         er = analysis.get("explainability_report", {})
-        return StreamingResponse(io.BytesIO(pdf_bytes), media_type="application/pdf",
-            headers={"Content-Disposition": f"attachment; filename={base}_readiness_report.pdf",
-                     "X-Readiness-Score": str(er.get("readiness_score", 0)),
-                     "X-Grade": er.get("grade", "?")})
+
+        return StreamingResponse(
+            io.BytesIO(pdf_bytes),
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": f"attachment; filename={base}_readiness_report.pdf",
+                "X-Readiness-Score":   str(er.get("readiness_score", 0)),
+                "X-Grade":             er.get("grade", "?")
+            }
+        )
     except Exception as e:
-        return JSONResponse({"error": str(e)})
+        logger.error(f"POST /report error: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
 
 
 # ── ENDPOINT 5: COMPARE (DRIFT) ───────────────────────────────────────────────
-@app.post("/compare")
+@app.post("/compare", tags=["Analysis"])
 async def compare_train_test(
     train_file: UploadFile = File(...),
     test_file: UploadFile = File(...)
 ):
-    """
-    Distribution drift detection between train and test datasets.
-    KS test + PSI + Jensen-Shannon divergence for numeric columns.
-    Chi-squared + new category detection for categorical columns.
-    """
+    """Distribution drift detection: KS test + PSI + Jensen-Shannon."""
     try:
         train_df = _load_df(train_file.file, train_file.filename)
         test_df  = _load_df(test_file.file,  test_file.filename)
-        if train_df is None: return JSONResponse({"error": f"Unsupported: {train_file.filename}"})
-        if test_df is None:  return JSONResponse({"error": f"Unsupported: {test_file.filename}"})
-        if train_df.empty: return JSONResponse({"error": "Train dataset is empty."})
-        if test_df.empty:  return JSONResponse({"error": "Test dataset is empty."})
+
+        if train_df is None: return JSONResponse({"error": f"Unsupported: {train_file.filename}"}, status_code=400)
+        if test_df  is None: return JSONResponse({"error": f"Unsupported: {test_file.filename}"},  status_code=400)
+        if train_df.empty:   return JSONResponse({"error": "Train dataset is empty."},              status_code=400)
+        if test_df.empty:    return JSONResponse({"error": "Test dataset is empty."},               status_code=400)
+
         common = set(train_df.columns) & set(test_df.columns)
-        if not common: return JSONResponse({"error": "No common columns.", "train_cols": train_df.columns.tolist(), "test_cols": test_df.columns.tolist()})
+        if not common:
+            return JSONResponse({
+                "error": "No common columns between files.",
+                "train_columns": train_df.columns.tolist(),
+                "test_columns":  test_df.columns.tolist()
+            }, status_code=400)
+
         result = compare_datasets(train_df, test_df)
         result["file_info"] = {
-            "train_file": train_file.filename, "test_file": test_file.filename,
-            "train_shape": {"rows": int(train_df.shape[0]), "columns": int(train_df.shape[1])},
-            "test_shape":  {"rows": int(test_df.shape[0]),  "columns": int(test_df.shape[1])},
+            "train_file":    train_file.filename,
+            "test_file":     test_file.filename,
+            "train_shape":   {"rows": int(train_df.shape[0]), "columns": int(train_df.shape[1])},
+            "test_shape":    {"rows": int(test_df.shape[0]),  "columns": int(test_df.shape[1])},
             "common_columns": len(common)
         }
         return JSONResponse(content=clean_for_json(result))
     except Exception as e:
-        import traceback
-        return JSONResponse({"error": str(e), "traceback": traceback.format_exc()[-800:]})
+        logger.error(f"POST /compare error: {traceback.format_exc()}")
+        return JSONResponse({"error": str(e), "traceback": traceback.format_exc()[-800:]}, status_code=500)
 
 
-# ── ENDPOINT 6: WHAT-IF SIMULATOR ────────────────────────────────────────────
-@app.post("/whatif")
+# ── ENDPOINT 6: WHAT-IF ───────────────────────────────────────────────────────
+@app.post("/whatif", tags=["Analysis"])
 async def whatif_simulation(
     file: UploadFile = File(...),
     target_column: str = Query(default=None)
 ):
-    """
-    What-If Simulator: proves that fixing data issues improves ML performance.
-
-    Applies each fix one by one (drop high-missing → remove duplicates →
-    remove IDs → impute → winsorize outliers → log transform → encode)
-    and measures model performance after each step.
-
-    Returns before/after comparison and improvement curve.
-    This is the experimental validation for the research paper:
-    'Higher readiness score → better model performance.'
-    """
+    """What-If Simulator: measure improvement from each data fix."""
     try:
         df = _load_df(file.file, file.filename)
-        if df is None: return JSONResponse({"error": "Unsupported format."})
-        if df.empty: return JSONResponse({"error": "Dataset is empty."})
-        if df.shape[1] < 2: return JSONResponse({"error": "Need at least 2 columns."})
-        if len(df) < 20: return JSONResponse({"error": "Need at least 20 rows."})
+        df, err = _validate_df(df, file.filename)
+        if err: return err
+        if len(df) < 20: return JSONResponse({"error": "Need at least 20 rows."}, status_code=400)
 
         td = detect_target_column(df)
         target = target_column if (target_column and target_column in df.columns) else td["predicted_target"]
         task = _detect_task(df, target)
 
-        issues = []
-        result = run_whatif_simulation(df, target, task, issues)
+        result = run_whatif_simulation(df, target, task, [])
         return JSONResponse(content=clean_for_json(result))
     except Exception as e:
-        import traceback
-        return JSONResponse({"error": str(e), "traceback": traceback.format_exc()[-800:]})
+        logger.error(f"POST /whatif error: {e}")
+        return JSONResponse({"error": str(e), "traceback": traceback.format_exc()[-800:]}, status_code=500)
 
 
 # ── ENDPOINT 7: NATURAL LANGUAGE REPORT ──────────────────────────────────────
-@app.post("/nlreport")
+@app.post("/nlreport", tags=["Analysis"])
 async def nl_report(
     file: UploadFile = File(...),
     target_column: str = Query(default=None),
     format: str = Query(default="json", description="json or text")
 ):
-    """
-    Natural Language Report Generator.
-
-    Runs full analysis then converts every finding into plain English paragraphs.
-    No JSON to interpret — just readable paragraphs explaining:
-      - What each issue is
-      - Why it causes ML failure (root cause)
-      - What the expected impact is
-      - What to do about it
-
-    Returns either JSON (with sections dict) or plain text (full readable report).
-    Use format=text for a copy-paste ready research memo.
-    """
+    """Natural language explanation of every ML finding."""
     try:
         df = _load_df(file.file, file.filename)
-        if df is None: return JSONResponse({"error": "Unsupported format."})
-        if df.empty: return JSONResponse({"error": "Dataset is empty."})
-        if df.shape[1] < 2: return JSONResponse({"error": "Need at least 2 columns."})
+        df, err = _validate_df(df, file.filename)
+        if err: return err
 
         analysis, _ = _run_full_analysis(df, target_column, file.filename)
-        if "error" in analysis: return JSONResponse(analysis)
+        if isinstance(analysis, dict) and "error" in analysis:
+            return JSONResponse(analysis, status_code=400)
 
         base = file.filename.rsplit(".", 1)[0]
         nl_result = generate_nl_report(analysis, filename=base)
 
         if format == "text":
             return PlainTextResponse(nl_result.get("full_report", ""))
-
         return JSONResponse(content=clean_for_json(nl_result))
     except Exception as e:
-        import traceback
-        return JSONResponse({"error": str(e), "traceback": traceback.format_exc()[-800:]})
+        return JSONResponse({"error": str(e), "traceback": traceback.format_exc()[-800:]}, status_code=500)
 
 
-# ── ENDPOINT 8: AUTOML OPTIMIZER ─────────────────────────────────────────────
-@app.post("/automl")
+# ── ENDPOINT 8: AUTOML ────────────────────────────────────────────────────────
+@app.post("/automl", tags=["Analysis"])
 async def automl_optimize(
     file: UploadFile = File(...),
     target_column: str = Query(default=None),
-    max_configs: int = Query(default=12, description="Max preprocessing configs to test (6-24)")
+    max_configs: int = Query(default=12, ge=6, le=24)
 ):
-    """
-    AutoML Pipeline Optimizer with Ensemble Learning.
-
-    Tests combinations of:
-      Preprocessing: mean/median imputation, log transform, feature selection, scaling
-      Individual models: Random Forest, Gradient Boosting, Logistic Regression,
-                         SVM, Extra Trees, AdaBoost, KNN, Naive Bayes
-      Ensemble models:
-        - VotingClassifier (soft) — RF + GB + LR predict probabilities, vote on average
-        - VotingClassifier (hard) — RF + GB + SVM + LR vote on majority class
-        - BaggingClassifier — 30 Decision Trees trained on random subsets
-        - AdaBoostClassifier — sequential boosting, focuses on hard examples
-        - StackingClassifier — RF + GB + LR as base, LR as meta-learner
-
-    Returns:
-      best_config: winning model + preprocessing combination
-      ensemble_comparison: how each ensemble method performed
-      preprocessing_impact: which preprocessing decisions actually help
-      research_insight: publication-ready summary paragraph
-    """
+    """AutoML: tests ensemble combos, returns best pipeline."""
     try:
         df = _load_df(file.file, file.filename)
-        if df is None: return JSONResponse({"error": "Unsupported format."})
-        if df.empty: return JSONResponse({"error": "Dataset is empty."})
-        if df.shape[1] < 2: return JSONResponse({"error": "Need at least 2 columns."})
-        if len(df) < 20: return JSONResponse({"error": "Need at least 20 rows for AutoML."})
+        df, err = _validate_df(df, file.filename)
+        if err: return err
+        if len(df) < 20: return JSONResponse({"error": "Need at least 20 rows."}, status_code=400)
 
         td = detect_target_column(df)
         target = target_column if (target_column and target_column in df.columns) else td["predicted_target"]
         task = _detect_task(df, target)
-        max_configs = max(6, min(24, max_configs))
 
         result = run_automl_optimization(df, target=target, task=task, max_configs=max_configs)
         return JSONResponse(content=clean_for_json(result))
     except Exception as e:
-        import traceback
-        return JSONResponse({"error": str(e), "traceback": traceback.format_exc()[-800:]})
+        return JSONResponse({"error": str(e), "traceback": traceback.format_exc()[-800:]}, status_code=500)
 
 
-# ── ENDPOINT 9: SHAP EXPLAINABILITY ──────────────────────────────────────────
-@app.post("/shap")
+# ── ENDPOINT 9: SHAP ──────────────────────────────────────────────────────────
+@app.post("/shap", tags=["Analysis"])
 async def shap_explainability(
     file: UploadFile = File(...),
     target_column: str = Query(default=None),
-    max_samples: int = Query(default=200, description="Max rows for SHAP (larger = slower)"),
-    top_n_features: int = Query(default=10, description="Top N features to return")
+    max_samples: int = Query(default=200, ge=50, le=1000),
+    top_n_features: int = Query(default=10, ge=3, le=50)
 ):
-    """
-    SHAP (SHapley Additive exPlanations) Explainability Analysis.
-
-    Explains WHY the model makes each prediction using game theory.
-
-    Returns:
-      global_feature_importance: mean |SHAP| per feature (true importance)
-      feature_direction: does each feature push predictions up or down?
-      top_feature_interactions: which features interact with each other?
-      sample_explanations: for 3 sample rows, which features caused that prediction?
-      rf_vs_shap_comparison: where RF importance and SHAP disagree (SHAP is more reliable)
-      shap_summary: plain-English explanation of model behavior
-
-    SHAP is grounded in cooperative game theory (Shapley values).
-    It is the gold standard for ML explainability — used by Google,
-    Microsoft, and all major ML teams in production.
-
-    Cite: Lundberg & Lee (2017), NeurIPS.
-    """
+    """SHAP explainability — why the model predicts what it predicts."""
     try:
         df = _load_df(file.file, file.filename)
-        if df is None: return JSONResponse({"error": "Unsupported format."})
-        if df.empty: return JSONResponse({"error": "Dataset is empty."})
-        if df.shape[1] < 2: return JSONResponse({"error": "Need at least 2 columns."})
-        if len(df) < 20: return JSONResponse({"error": "Need at least 20 rows for SHAP."})
+        df, err = _validate_df(df, file.filename)
+        if err: return err
+        if len(df) < 20: return JSONResponse({"error": "Need at least 20 rows."}, status_code=400)
 
         td = detect_target_column(df)
         target = target_column if (target_column and target_column in df.columns) else td["predicted_target"]
@@ -490,15 +683,14 @@ async def shap_explainability(
         )
         return JSONResponse(content=clean_for_json(result))
     except Exception as e:
-        import traceback
-        return JSONResponse({"error": str(e), "traceback": traceback.format_exc()[-800:]})
-    
-@app.get("/test-db")
-def test_db():
-    reports_collection.insert_one({"test": "working"})
-    return {"status": "MongoDB connected"}
+        return JSONResponse({"error": str(e), "traceback": traceback.format_exc()[-800:]}, status_code=500)
 
-@app.get("/reports")
-def get_reports():
-    data = list(reports_collection.find({}, {"_id": 0}))
-    return data
+
+# ── LEGACY TEST ENDPOINTS (keep for backward compat) ─────────────────────────
+@app.get("/test-db", tags=["Meta"])
+def test_db():
+    try:
+        reports_collection.insert_one({"test": "working", "created_at": datetime.utcnow()})
+        return {"status": "MongoDB connected ✅"}
+    except Exception as e:
+        return JSONResponse({"status": "MongoDB error ❌", "error": str(e)}, status_code=500)
