@@ -7,3 +7,4 @@ python-multipart
 openpyxl
 reportlab
 pymongo
+python-dotenv
