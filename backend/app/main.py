@@ -43,6 +43,8 @@ from app.ml.nl_report_generator import generate_nl_report
 from app.ml.automl_optimizer import run_automl_optimization
 from app.ml.shap_explainability import run_shap_analysis
 
+from app.sample_datasets import router as sample_router
+
 # ── DB & Auth ─────────────────────────────────────────────────────────────────
 from app.db import reports_collection, users_collection
 from app.auth import (
@@ -107,6 +109,8 @@ def _load_df(file_obj, filename: str) -> Optional[pd.DataFrame]:
         logger.error(f"Failed to load file {filename}: {e}")
     return None
 
+
+app.include_router(sample_router)
 
 def _detect_task(df: pd.DataFrame, target: str) -> str:
     y = df[target].dropna()
