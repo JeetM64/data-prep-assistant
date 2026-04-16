@@ -1,895 +1,1426 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<title>ML Data Readiness Analyzer</title>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ML Readiness Analyzer</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Syne:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <style>
-  *{box-sizing:border-box;margin:0;padding:0}
-  body{font-family:system-ui,-apple-system,sans-serif;background:#f5f5f5;color:#222;font-size:14px}
-  a{color:#2563eb;text-decoration:none}
-  a:hover{text-decoration:underline}
+/* ═══════════════════════════════════════════════════════ RESET + TOKENS */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-  /* ── Layout ── */
-  #app{display:flex;flex-direction:column;min-height:100vh}
-  header{background:#fff;border-bottom:1px solid #e0e0e0;padding:12px 24px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:100}
-  header h1{font-size:16px;font-weight:700;letter-spacing:-0.3px}
-  header .subtitle{font-size:12px;color:#666;margin-top:1px}
-  #userBar{display:flex;align-items:center;gap:10px;font-size:13px}
-  #userName{font-weight:600}
-  btn-sm{display:inline-block}
-  main{flex:1;padding:24px;max-width:900px;margin:0 auto;width:100%}
+:root {
+  --bg:        #0a0c10;
+  --bg2:       #0f1117;
+  --bg3:       #141720;
+  --surface:   #1a1e2b;
+  --surface2:  #20253a;
+  --border:    #2a2f45;
+  --border2:   #343b56;
+  --text:      #e8eaf0;
+  --text2:     #9ba3bc;
+  --text3:     #5e6680;
+  --accent:    #4f7fff;
+  --accent2:   #6b97ff;
+  --green:     #2ecc71;
+  --green2:    #27ae60;
+  --orange:    #f39c12;
+  --red:       #e74c3c;
+  --yellow:    #f1c40f;
+  --purple:    #9b59b6;
+  --teal:      #1abc9c;
+  --mono:      'JetBrains Mono', monospace;
+  --sans:      'Syne', sans-serif;
+  --r:         6px;
+  --r2:        10px;
+  --r3:        14px;
+  --sh:        0 2px 8px rgba(0,0,0,.4);
+  --sh2:       0 4px 24px rgba(0,0,0,.5);
+}
 
-  /* ── Auth Modal ── */
-  #authOverlay{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:999;display:flex;align-items:center;justify-content:center}
-  #authBox{background:#fff;border-radius:8px;padding:28px;width:100%;max-width:380px;box-shadow:0 8px 32px rgba(0,0,0,.18)}
-  #authBox h2{font-size:18px;margin-bottom:18px;font-weight:700}
-  .tabs{display:flex;gap:0;margin-bottom:20px;border-bottom:2px solid #e0e0e0}
-  .tab{padding:8px 18px;cursor:pointer;font-size:13px;font-weight:600;border:none;background:none;color:#888}
-  .tab.active{color:#2563eb;border-bottom:2px solid #2563eb;margin-bottom:-2px}
-  .field{margin-bottom:14px}
-  .field label{display:block;font-size:12px;font-weight:600;color:#555;margin-bottom:4px}
-  .field input{width:100%;padding:8px 10px;border:1px solid #ccc;border-radius:5px;font-size:13px;outline:none}
-  .field input:focus{border-color:#2563eb}
-  .btn{display:inline-flex;align-items:center;justify-content:center;padding:9px 18px;border-radius:5px;font-size:13px;font-weight:600;cursor:pointer;border:none;transition:opacity .15s}
-  .btn:disabled{opacity:.55;cursor:not-allowed}
-  .btn-primary{background:#2563eb;color:#fff}
-  .btn-primary:hover:not(:disabled){background:#1d4ed8}
-  .btn-secondary{background:#f0f0f0;color:#333}
-  .btn-secondary:hover:not(:disabled){background:#e0e0e0}
-  .btn-danger{background:#dc2626;color:#fff}
-  .btn-danger:hover:not(:disabled){background:#b91c1c}
-  .btn-sm{padding:6px 12px;font-size:12px}
-  .err-msg{background:#fef2f2;color:#dc2626;border:1px solid #fecaca;border-radius:4px;padding:8px 10px;font-size:12px;margin-bottom:12px}
-  .ok-msg{background:#f0fdf4;color:#16a34a;border:1px solid #bbf7d0;border-radius:4px;padding:8px 10px;font-size:12px;margin-bottom:12px}
-  #skipAuth{display:block;text-align:center;margin-top:12px;font-size:12px;color:#888;cursor:pointer}
-  #skipAuth:hover{color:#333}
+html { scroll-behavior: smooth; }
+body { font-family: var(--sans); background: var(--bg); color: var(--text); font-size: 13px; line-height: 1.6; min-height: 100vh; }
 
-  /* ── Cards ── */
-  .card{background:#fff;border:1px solid #e0e0e0;border-radius:8px;padding:20px;margin-bottom:18px}
-  .card h2{font-size:15px;font-weight:700;margin-bottom:14px;color:#111}
+/* ═══════════════════════════════════════════════════════ SCROLLBAR */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: var(--bg2); }
+::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 10px; }
 
-  /* ── Upload Zone ── */
-  #dropZone{border:2px dashed #ccc;border-radius:6px;padding:32px 20px;text-align:center;cursor:pointer;transition:border-color .2s,background .2s;background:#fafafa}
-  #dropZone:hover,#dropZone.drag-over{border-color:#2563eb;background:#eff6ff}
-  #dropZone .icon{font-size:28px;margin-bottom:8px}
-  #dropZone .hint{color:#888;font-size:12px;margin-top:4px}
-  #fileInput{display:none}
-  #fileSelected{margin-top:10px;font-size:13px;color:#2563eb;font-weight:600}
+/* ═══════════════════════════════════════════════════════ TOPBAR */
+.topbar {
+  position: sticky; top: 0; z-index: 300;
+  height: 52px; background: var(--bg2);
+  border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 24px;
+  backdrop-filter: blur(12px);
+}
+.tb-brand { display: flex; align-items: center; gap: 10px; }
+.tb-logo {
+  width: 30px; height: 30px; border-radius: 8px;
+  background: linear-gradient(135deg, var(--accent), var(--teal));
+  display: flex; align-items: center; justify-content: center;
+  font-size: 15px; flex-shrink: 0;
+}
+.tb-title { font-weight: 800; font-size: 14px; letter-spacing: -.3px; }
+.tb-ver { font-family: var(--mono); font-size: 10px; color: var(--text3); background: var(--surface); padding: 2px 7px; border-radius: 20px; }
+.tb-right { display: flex; align-items: center; gap: 16px; }
+.api-status { display: flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: 11px; color: var(--text3); }
+.api-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 6px var(--green); animation: pulse 2s ease-in-out infinite; }
+.api-dot.offline { background: var(--red); box-shadow: 0 0 6px var(--red); animation: none; }
+@keyframes pulse { 0%,100%{opacity:1}50%{opacity:.4} }
 
-  /* ── Sample Datasets ── */
-  .samples{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
-  .sample-chip{padding:6px 13px;border:1px solid #d1d5db;border-radius:20px;font-size:12px;font-weight:600;cursor:pointer;background:#fff;transition:all .15s;color:#374151}
-  .sample-chip:hover{border-color:#2563eb;color:#2563eb;background:#eff6ff}
-  .sample-chip.selected{background:#2563eb;color:#fff;border-color:#2563eb}
+/* ═══════════════════════════════════════════════════════ UPLOAD SCREEN */
+#upload-screen { max-width: 640px; margin: 60px auto 40px; padding: 0 20px; }
 
-  /* ── Target column row ── */
-  .row{display:flex;align-items:center;gap:10px;margin-top:14px;flex-wrap:wrap}
-  .row label{font-size:12px;font-weight:600;color:#555;white-space:nowrap}
-  .row input{flex:1;min-width:120px;padding:7px 10px;border:1px solid #ccc;border-radius:5px;font-size:13px;outline:none}
-  .row input:focus{border-color:#2563eb}
+.hero { text-align: center; margin-bottom: 40px; }
+.hero h1 { font-size: 36px; font-weight: 800; letter-spacing: -1.5px; line-height: 1.1; margin-bottom: 12px; }
+.hero h1 span { background: linear-gradient(135deg, var(--accent), var(--teal)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+.hero p { color: var(--text2); font-size: 14px; max-width: 420px; margin: 0 auto; }
 
-  /* ── Progress ── */
-  #progressWrap{display:none;margin-top:14px}
-  #progressBar{width:100%;height:6px;background:#e0e0e0;border-radius:3px;overflow:hidden}
-  #progressFill{height:100%;width:0;background:#2563eb;transition:width .4s;border-radius:3px}
-  #progressLabel{font-size:12px;color:#555;margin-top:4px}
+.upload-box {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--r3);
+  padding: 28px;
+  box-shadow: var(--sh2);
+}
 
-  /* ── Status Banners ── */
-  #statusBanner{display:none;padding:10px 14px;border-radius:5px;font-size:13px;margin-top:14px;font-weight:500}
-  .status-err{background:#fef2f2;color:#dc2626;border:1px solid #fecaca}
-  .status-ok{background:#f0fdf4;color:#16a34a;border:1px solid #bbf7d0}
-  .status-info{background:#eff6ff;color:#2563eb;border:1px solid #bfdbfe}
+.dropzone {
+  border: 2px dashed var(--border2);
+  border-radius: var(--r2);
+  padding: 40px 24px;
+  text-align: center;
+  cursor: pointer;
+  transition: all .2s;
+  background: var(--bg3);
+  margin-bottom: 16px;
+  position: relative;
+}
+.dropzone:hover, .dropzone.drag { border-color: var(--accent); background: rgba(79,127,255,.05); }
+.dropzone input { display: none; }
+.drop-icon { font-size: 36px; margin-bottom: 12px; opacity: .6; display: block; }
+.drop-primary { font-size: 14px; font-weight: 600; margin-bottom: 4px; }
+.drop-primary strong { color: var(--accent); cursor: pointer; }
+.drop-secondary { font-size: 11px; color: var(--text3); font-family: var(--mono); }
 
-  /* ── Results ── */
-  #results{display:none}
-  .score-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:12px;margin-bottom:18px}
-  .score-box{background:#f8f9fa;border:1px solid #e0e0e0;border-radius:6px;padding:14px;text-align:center}
-  .score-box .val{font-size:28px;font-weight:800;color:#2563eb}
-  .score-box .lbl{font-size:11px;color:#666;margin-top:2px;font-weight:600;text-transform:uppercase;letter-spacing:.5px}
-  .score-box .sub{font-size:11px;color:#888;margin-top:2px}
+.file-pill {
+  display: none; align-items: center; gap: 8px;
+  background: rgba(46,204,113,.1); border: 1px solid rgba(46,204,113,.3);
+  border-radius: var(--r); padding: 7px 12px; margin-bottom: 14px;
+  font-family: var(--mono); font-size: 11px; color: var(--green);
+}
+.file-pill.show { display: flex; }
 
-  .section-title{font-size:13px;font-weight:700;color:#374151;margin:16px 0 8px;text-transform:uppercase;letter-spacing:.5px}
-  table{width:100%;border-collapse:collapse;font-size:13px}
-  th{text-align:left;padding:7px 10px;background:#f8f9fa;border-bottom:2px solid #e0e0e0;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#555}
-  td{padding:7px 10px;border-bottom:1px solid #f0f0f0;vertical-align:top}
-  tr:last-child td{border-bottom:none}
-  tr:hover td{background:#fafafa}
+.input-row { display: flex; gap: 8px; }
+.text-input {
+  flex: 1; background: var(--bg3); border: 1px solid var(--border);
+  border-radius: var(--r); padding: 9px 13px; font-size: 13px;
+  color: var(--text); font-family: var(--mono); outline: none;
+  transition: border-color .15s;
+}
+.text-input:focus { border-color: var(--accent); }
+.text-input::placeholder { color: var(--text3); font-family: var(--sans); }
 
-  .badge{display:inline-block;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600}
-  .badge-green{background:#dcfce7;color:#15803d}
-  .badge-yellow{background:#fef9c3;color:#854d0e}
-  .badge-red{background:#fee2e2;color:#991b1b}
-  .badge-blue{background:#dbeafe;color:#1d4ed8}
-  .badge-gray{background:#f3f4f6;color:#374151}
+.btn {
+  border: none; border-radius: var(--r); padding: 9px 20px;
+  font-size: 13px; font-weight: 700; cursor: pointer;
+  transition: all .15s; white-space: nowrap;
+  font-family: var(--sans); letter-spacing: .2px;
+}
+.btn-primary { background: var(--accent); color: white; }
+.btn-primary:hover { background: var(--accent2); transform: translateY(-1px); }
+.btn-primary:disabled { background: var(--surface2); color: var(--text3); cursor: not-allowed; transform: none; }
+.btn-secondary { background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
+.btn-secondary:hover { background: var(--surface); border-color: var(--border2); }
+.btn-sm { padding: 6px 14px; font-size: 11px; }
+.btn-ghost { background: transparent; color: var(--text2); border: 1px solid var(--border); }
+.btn-ghost:hover { border-color: var(--border2); color: var(--text); }
 
-  .collapsible{cursor:pointer;display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid #e8e8e8;font-weight:600;font-size:13px;color:#111}
-  .collapsible:hover{color:#2563eb}
-  .collapsible .arrow{font-size:11px;transition:transform .2s}
-  .collapsible.open .arrow{transform:rotate(90deg)}
-  .collapse-body{display:none;padding:12px 0}
-  .collapse-body.open{display:block}
+.features-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 20px; justify-content: center; }
+.feat-chip { font-size: 10px; padding: 3px 9px; background: var(--surface); border: 1px solid var(--border); border-radius: 20px; color: var(--text3); font-family: var(--mono); }
 
-  /* ── History ── */
-  #histList{display:flex;flex-direction:column;gap:8px}
-  .hist-item{display:flex;align-items:center;justify-content:space-between;padding:10px 12px;border:1px solid #e0e0e0;border-radius:6px;background:#fff}
-  .hist-item .name{font-weight:600;font-size:13px}
-  .hist-item .meta{font-size:11px;color:#888;margin-top:2px}
-  .hist-actions{display:flex;gap:6px}
+/* Sample datasets */
+.or-divider { display: flex; align-items: center; gap: 10px; margin: 24px 0 16px; color: var(--text3); font-size: 11px; }
+.or-divider::before, .or-divider::after { content:''; flex:1; height:1px; background: var(--border); }
+.samples-label { font-size: 11px; font-weight: 700; color: var(--text3); text-transform: uppercase; letter-spacing: 1px; text-align: center; margin-bottom: 10px; }
+.samples-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 8px; }
+.sc {
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: var(--r2); padding: 11px 12px; cursor: pointer;
+  transition: all .15s; text-align: left; width: 100%;
+  font-family: var(--sans);
+}
+.sc:hover { border-color: var(--accent); background: rgba(79,127,255,.06); transform: translateY(-1px); }
+.sc.active { border-color: var(--accent); background: rgba(79,127,255,.1); box-shadow: 0 0 0 2px rgba(79,127,255,.2); }
+.sc-top { display: flex; align-items: center; gap: 6px; margin-bottom: 3px; }
+.sc-icon { font-size: 14px; }
+.sc-name { font-size: 12px; font-weight: 700; color: var(--text); }
+.sc-badge { font-size: 9px; padding: 1px 6px; border-radius: 3px; font-weight: 700; font-family: var(--mono); margin-left: auto; }
+.cls { background: rgba(79,127,255,.2); color: var(--accent2); }
+.reg { background: rgba(46,204,113,.2); color: var(--green); }
+.sc-desc { font-size: 10px; color: var(--text3); line-height: 1.4; }
+.sc-meta { font-size: 10px; color: var(--text3); margin-top: 2px; font-family: var(--mono); }
+.sample-status { display: none; text-align: center; padding: 8px; font-size: 11px; color: var(--text2); font-family: var(--mono); margin-top: 8px; }
 
-  /* ── Responsive ── */
-  @media(max-width:600px){
-    main{padding:14px}
-    .score-grid{grid-template-columns:repeat(2,1fr)}
-    header{padding:10px 14px}
-  }
+/* ═══════════════════════════════════════════════════════ LOADING */
+#loading-screen {
+  display: none; max-width: 420px; margin: 120px auto; text-align: center; padding: 0 24px;
+}
+.spinner {
+  width: 48px; height: 48px; border: 3px solid var(--border);
+  border-top-color: var(--accent); border-radius: 50%;
+  animation: spin .7s linear infinite; margin: 0 auto 20px;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.loading-title { font-size: 16px; font-weight: 700; margin-bottom: 6px; }
+.progress-track { height: 3px; background: var(--border); border-radius: 2px; margin: 14px 0 10px; overflow: hidden; }
+.progress-fill { height: 100%; background: linear-gradient(90deg, var(--accent), var(--teal)); border-radius: 2px; animation: prog 28s linear forwards; }
+@keyframes prog { from{width:0} to{width:94%} }
+.loading-step { font-size: 11px; color: var(--text3); font-family: var(--mono); }
+
+/* ═══════════════════════════════════════════════════════ REPORT */
+#report { display: none; }
+
+.report-header {
+  background: var(--bg2); border-bottom: 1px solid var(--border);
+  padding: 16px 24px; display: flex; align-items: center;
+  justify-content: space-between; flex-wrap: wrap; gap: 12px;
+}
+.rh-left { min-width: 0; }
+.rh-filename { font-size: 16px; font-weight: 800; font-family: var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rh-meta { font-size: 11px; color: var(--text3); margin-top: 2px; font-family: var(--mono); }
+.rh-right { display: flex; align-items: center; gap: 14px; flex-shrink: 0; }
+.score-block { display: flex; align-items: center; gap: 10px; }
+.score-number { font-family: var(--mono); font-size: 32px; font-weight: 700; line-height: 1; }
+.score-label { font-size: 9px; color: var(--text3); text-transform: uppercase; letter-spacing: 1px; }
+.grade-circle {
+  width: 46px; height: 46px; border-radius: 50%; border: 2px solid;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 20px; font-weight: 800; font-family: var(--mono);
+}
+.g-A { border-color: var(--green); color: var(--green); }
+.g-B { border-color: var(--teal); color: var(--teal); }
+.g-C { border-color: var(--orange); color: var(--orange); }
+.g-D { border-color: var(--red); color: var(--red); }
+.g-F { border-color: #c0392b; color: #c0392b; }
+
+/* ═══════════════════════════════════════════════════════ TABS */
+.tab-bar {
+  background: var(--bg2); border-bottom: 1px solid var(--border);
+  display: flex; padding: 0 24px; overflow-x: auto;
+  position: sticky; top: 52px; z-index: 200; gap: 0;
+}
+.tab {
+  padding: 12px 16px; font-size: 12px; font-weight: 600;
+  color: var(--text3); cursor: pointer; border-bottom: 2px solid transparent;
+  white-space: nowrap; transition: all .15s; letter-spacing: .3px;
+  text-transform: uppercase;
+}
+.tab:hover { color: var(--text2); }
+.tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+.pane { display: none; padding: 22px 24px; max-width: 1320px; margin: 0 auto; }
+.pane.active { display: block; }
+
+/* ═══════════════════════════════════════════════════════ COMPONENTS */
+.stats-row {
+  display: grid; grid-template-columns: repeat(8,1fr);
+  gap: 1px; background: var(--border);
+  border: 1px solid var(--border); border-radius: var(--r2);
+  overflow: hidden; margin-bottom: 18px;
+}
+.stat-cell { background: var(--bg2); padding: 14px 10px; text-align: center; }
+.stat-v { font-family: var(--mono); font-size: 18px; font-weight: 700; color: var(--text); }
+.stat-l { font-size: 9px; color: var(--text3); margin-top: 2px; text-transform: uppercase; letter-spacing: .6px; }
+
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 14px; }
+.grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; margin-bottom: 14px; }
+
+.card {
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: var(--r2); margin-bottom: 14px; overflow: hidden;
+}
+.card-head {
+  padding: 11px 16px; border-bottom: 1px solid var(--border);
+  font-size: 11px; font-weight: 700; color: var(--text2);
+  text-transform: uppercase; letter-spacing: .6px;
+  display: flex; align-items: center; justify-content: space-between;
+}
+.card-body { padding: 14px 16px; }
+.card-body.no-pad { padding: 0; }
+
+.tbl { width: 100%; border-collapse: collapse; font-size: 12px; }
+.tbl th { background: var(--bg3); padding: 8px 12px; text-align: left; font-weight: 700; color: var(--text3); border-bottom: 1px solid var(--border); font-size: 10px; text-transform: uppercase; letter-spacing: .5px; }
+.tbl td { padding: 7px 12px; border-bottom: 1px solid var(--bg3); color: var(--text); font-size: 11px; }
+.tbl tr:hover td { background: var(--bg3); }
+.tbl td.mono { font-family: var(--mono); }
+
+.badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: 2px 8px; border-radius: 4px; font-size: 9px;
+  font-weight: 700; text-transform: uppercase; letter-spacing: .5px;
+  font-family: var(--mono);
+}
+.bd-CRITICAL { background: rgba(231,76,60,.2); color: #e74c3c; border: 1px solid rgba(231,76,60,.3); }
+.bd-HIGH     { background: rgba(243,156,18,.2); color: #f39c12; border: 1px solid rgba(243,156,18,.3); }
+.bd-MODERATE { background: rgba(241,196,15,.2); color: #f1c40f; border: 1px solid rgba(241,196,15,.3); }
+.bd-LOW      { background: rgba(46,204,113,.2); color: #2ecc71; border: 1px solid rgba(46,204,113,.3); }
+.bd-ok       { background: rgba(79,127,255,.2); color: var(--accent2); border: 1px solid rgba(79,127,255,.3); }
+.bd-STABLE   { background: rgba(46,204,113,.15); color: var(--green); }
+.bd-MODERATE_stab { background: rgba(241,196,15,.15); color: var(--yellow); }
+.bd-UNSTABLE { background: rgba(231,76,60,.15); color: var(--red); }
+
+.bar-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.bar-lbl { width: 110px; font-size: 11px; color: var(--text); flex-shrink: 0; text-transform: capitalize; font-family: var(--mono); }
+.bar-track { flex: 1; height: 6px; background: var(--bg3); border-radius: 4px; overflow: hidden; }
+.bar-fill { height: 100%; border-radius: 4px; transition: width .8s cubic-bezier(.4,0,.2,1); }
+.bar-val { width: 36px; text-align: right; font-size: 12px; font-weight: 700; font-family: var(--mono); }
+
+.issue-card {
+  border-left: 3px solid var(--border); padding: 10px 13px;
+  margin-bottom: 7px; border-radius: 0 var(--r) var(--r) 0;
+  background: var(--bg3);
+}
+.issue-card.CRITICAL { border-left-color: var(--red); background: rgba(231,76,60,.06); }
+.issue-card.HIGH     { border-left-color: var(--orange); background: rgba(243,156,18,.06); }
+.issue-card.MODERATE { border-left-color: var(--yellow); background: rgba(241,196,15,.06); }
+.issue-card.LOW      { border-left-color: var(--green); background: rgba(46,204,113,.06); }
+.issue-head { display: flex; align-items: center; gap: 7px; margin-bottom: 4px; }
+.issue-title { font-weight: 700; font-size: 12px; }
+.issue-explain { font-size: 11px; color: var(--text2); margin-bottom: 5px; line-height: 1.5; }
+.issue-fix { font-size: 11px; color: var(--accent2); background: rgba(79,127,255,.1); padding: 3px 8px; border-radius: 3px; display: inline-block; font-family: var(--mono); }
+
+.signal-item { display: flex; align-items: flex-start; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 11px; }
+.signal-item:last-child { border-bottom: none; }
+.sig-check { color: var(--green); font-size: 13px; flex-shrink: 0; line-height: 1.4; }
+
+.module-grid { display: grid; grid-template-columns: repeat(auto-fill,minmax(160px,1fr)); gap: 6px; }
+.module-item { display: flex; align-items: center; gap: 7px; padding: 7px 10px; border: 1px solid var(--border); border-radius: var(--r); background: var(--bg3); }
+.m-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+.m-dot.ok { background: var(--green); }
+.m-dot.bad { background: var(--orange); }
+.m-name { font-size: 11px; color: var(--text2); text-transform: capitalize; }
+.m-cnt { margin-left: auto; font-size: 10px; color: var(--text3); font-family: var(--mono); }
+
+.model-row { display: flex; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--border); }
+.model-row:last-child { border-bottom: none; }
+.model-name { width: 170px; font-weight: 700; font-size: 12px; flex-shrink: 0; font-family: var(--mono); }
+.model-bar { flex: 1; height: 6px; background: var(--bg3); border-radius: 4px; overflow: hidden; }
+.model-fill { height: 100%; border-radius: 4px; background: var(--accent); }
+.model-fill.best { background: linear-gradient(90deg, var(--green), var(--teal)); }
+.model-score { font-size: 15px; font-weight: 700; font-family: var(--mono); width: 55px; text-align: right; flex-shrink: 0; }
+.model-cv-info { font-size: 10px; color: var(--text3); width: 160px; text-align: right; flex-shrink: 0; font-family: var(--mono); }
+.best-tag { font-size: 9px; background: rgba(46,204,113,.2); color: var(--green); border: 1px solid rgba(46,204,113,.3); padding: 1px 6px; border-radius: 3px; font-weight: 700; }
+
+.ptag { display: inline-block; padding: 2px 7px; border-radius: 3px; font-size: 9px; font-weight: 700; font-family: var(--mono); letter-spacing: .4px; text-transform: uppercase; }
+.p-DROP      { background: rgba(231,76,60,.15); color: #e74c3c; }
+.p-IMPUTE    { background: rgba(241,196,15,.15); color: #f1c40f; }
+.p-ENCODE    { background: rgba(79,127,255,.15); color: var(--accent2); }
+.p-SCALE     { background: rgba(46,204,113,.15); color: var(--green); }
+.p-TRANSFORM { background: rgba(243,156,18,.15); color: var(--orange); }
+
+.info-row { display: flex; align-items: center; padding: 7px 0; border-bottom: 1px solid var(--border); gap: 12px; font-size: 12px; }
+.info-row:last-child { border-bottom: none; }
+.info-key { color: var(--text3); width: 140px; flex-shrink: 0; }
+.info-val { font-weight: 600; }
+
+.ov-row { display: flex; align-items: center; padding: 8px 10px; margin-bottom: 6px; border-radius: var(--r); background: var(--bg3); border-left: 3px solid var(--border2); gap: 10px; }
+.ov-row.LOW      { border-left-color: var(--green); }
+.ov-row.MODERATE { border-left-color: var(--orange); }
+.ov-row.HIGH     { border-left-color: var(--red); }
+.ov-name { font-weight: 700; font-size: 12px; width: 170px; flex-shrink: 0; font-family: var(--mono); }
+.ov-stats { flex: 1; font-size: 11px; color: var(--text2); font-family: var(--mono); }
+
+/* Advanced tools */
+.tools-grid { display: grid; grid-template-columns: repeat(auto-fill,minmax(250px,1fr)); gap: 12px; margin-bottom: 18px; }
+.tool-card {
+  background: var(--bg2); border: 1px solid var(--border); border-radius: var(--r2);
+  padding: 16px; transition: border-color .15s;
+}
+.tool-card:hover { border-color: var(--border2); }
+.tool-icon { font-size: 22px; margin-bottom: 10px; }
+.tool-title { font-size: 13px; font-weight: 700; margin-bottom: 4px; }
+.tool-desc { font-size: 11px; color: var(--text2); line-height: 1.5; margin-bottom: 12px; }
+.tool-result { margin-top: 12px; padding: 10px 12px; background: var(--bg3); border-radius: var(--r); font-size: 11px; display: none; border: 1px solid var(--border); }
+
+/* Chart wraps */
+.chart-wrap { position: relative; height: 240px; }
+
+/* OK / error states */
+.ok-text { color: var(--green); font-weight: 700; font-size: 12px; display: flex; align-items: center; gap: 6px; }
+.muted { color: var(--text3); font-size: 11px; }
+.mono { font-family: var(--mono); }
+
+/* Tier badges */
+.tier-H { color: var(--green); font-weight: 700; }
+.tier-M { color: var(--orange); font-weight: 700; }
+.tier-L { color: var(--yellow); }
+.tier-N { color: var(--text3); }
+
+/* FAIR dimension colors */
+.fair-bar-findable     { background: var(--accent); }
+.fair-bar-accessible   { background: var(--green); }
+.fair-bar-interoperable{ background: var(--orange); }
+.fair-bar-reusable     { background: var(--teal); }
+
+/* Quality dimension colors */
+.qd-completeness   { background: var(--accent); }
+.qd-uniqueness     { background: var(--green); }
+.qd-consistency    { background: var(--orange); }
+.qd-class_balance  { background: var(--purple); }
+.qd-feature_quality{ background: var(--teal); }
+.qd-adequacy       { background: var(--yellow); }
+
+/* Anomaly severity */
+.sev-LOW      { color: var(--green); }
+.sev-MODERATE { color: var(--orange); }
+.sev-HIGH     { color: var(--red); }
+
+@media (max-width: 900px) {
+  .grid-2, .grid-3 { grid-template-columns: 1fr; }
+  .stats-row { grid-template-columns: repeat(4,1fr); }
+  .samples-grid { grid-template-columns: repeat(2,1fr); }
+}
+@media (max-width: 600px) {
+  .rh-right { flex-wrap: wrap; }
+  .stats-row { grid-template-columns: repeat(2,1fr); }
+  .samples-grid { grid-template-columns: 1fr 1fr; }
+}
 </style>
 </head>
 <body>
-<div id="app">
 
-<!-- ── AUTH MODAL ─────────────────────────────────────────────────────── -->
-<div id="authOverlay">
-  <div id="authBox">
-    <h2>ML Analyzer</h2>
-    <div class="tabs">
-      <button class="tab active" onclick="switchTab('login')">Login</button>
-      <button class="tab" onclick="switchTab('register')">Sign Up</button>
+<!-- TOPBAR -->
+<div class="topbar">
+  <div class="tb-brand">
+    <div class="tb-logo">🔬</div>
+    <span class="tb-title">ML Readiness Analyzer</span>
+    <span class="tb-ver">v4.0</span>
+  </div>
+  <div class="tb-right">
+    <div class="api-status">
+      <div class="api-dot" id="api-dot"></div>
+      <span id="api-text">Connecting...</span>
     </div>
-
-    <!-- Login Form -->
-    <div id="loginForm">
-      <div id="loginErr" class="err-msg" style="display:none"></div>
-      <div class="field">
-        <label>Email</label>
-        <input id="loginEmail" type="email" placeholder="you@example.com" autocomplete="email"/>
-      </div>
-      <div class="field">
-        <label>Password</label>
-        <input id="loginPassword" type="password" placeholder="••••••••" autocomplete="current-password"/>
-      </div>
-      <button class="btn btn-primary" style="width:100%" id="loginBtn" onclick="doLogin()">Login</button>
-    </div>
-
-    <!-- Register Form -->
-    <div id="registerForm" style="display:none">
-      <div id="regErr" class="err-msg" style="display:none"></div>
-      <div class="field">
-        <label>Name</label>
-        <input id="regName" type="text" placeholder="Your name" autocomplete="name"/>
-      </div>
-      <div class="field">
-        <label>Email</label>
-        <input id="regEmail" type="email" placeholder="you@example.com" autocomplete="email"/>
-      </div>
-      <div class="field">
-        <label>Password <span style="font-weight:400;color:#888">(min 6 chars)</span></label>
-        <input id="regPassword" type="password" placeholder="••••••••" autocomplete="new-password"/>
-      </div>
-      <button class="btn btn-primary" style="width:100%" id="regBtn" onclick="doRegister()">Create Account</button>
-    </div>
-
-    <span id="skipAuth" onclick="skipAuth()">Continue without login →</span>
   </div>
 </div>
 
-<!-- ── HEADER ──────────────────────────────────────────────────────────── -->
-<header>
-  <div>
-    <div id="headerTitle" style="font-size:16px;font-weight:700">ML Data Readiness Analyzer</div>
-    <div class="subtitle">Upload a dataset → get a full ML readiness report</div>
+<!-- UPLOAD SCREEN -->
+<div id="upload-screen">
+  <div class="hero">
+    <h1>EDA &amp; ML Readiness<br><span>Fully Automated</span></h1>
+    <p>Upload any CSV or Excel file. Get a complete data science report — quality scores, feature analysis, model benchmarks, and actionable fixes.</p>
   </div>
-  <div id="userBar" style="display:none">
-    <span id="userName"></span>
-    <button class="btn btn-secondary btn-sm" onclick="doLogout()">Logout</button>
-  </div>
-</header>
 
-<!-- ── MAIN ───────────────────────────────────────────────────────────── -->
-<main>
-
-  <!-- Upload Card -->
-  <div class="card">
-    <h2>Analyze Dataset</h2>
-
-    <!-- Drop Zone -->
-    <div id="dropZone" onclick="document.getElementById('fileInput').click()">
-      <div class="icon">📂</div>
-      <div style="font-size:14px;font-weight:600;color:#444">Drop CSV / Excel here, or click to browse</div>
-      <div class="hint">Supported: .csv, .xlsx, .xls</div>
-      <div id="fileSelected"></div>
+  <div class="upload-box">
+    <div class="dropzone" id="dropzone" onclick="document.getElementById('file-input').click()">
+      <input type="file" id="file-input" accept=".csv,.xlsx,.xls">
+      <span class="drop-icon">📂</span>
+      <div class="drop-primary"><strong>Choose a file</strong> or drag &amp; drop</div>
+      <div class="drop-secondary">CSV · Excel (.xlsx, .xls)</div>
     </div>
-    <input id="fileInput" type="file" accept=".csv,.xlsx,.xls"/>
+    <div class="file-pill" id="file-pill">
+      <span>✓</span><span id="file-pill-text">—</span>
+    </div>
+    <div class="input-row">
+      <input class="text-input" type="text" id="target-col" placeholder="Target column (optional — auto-detected)">
+      <button class="btn btn-primary" id="analyze-btn" onclick="runAnalysis()" disabled>Analyze →</button>
+    </div>
 
-    <!-- Sample Datasets -->
-    <div style="margin-top:16px">
-      <div style="font-size:12px;font-weight:700;color:#555;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Or try a sample dataset</div>
-      <div class="samples">
-        <span class="sample-chip" data-id="iris" data-target="species" onclick="selectSample(this)">🌸 Iris</span>
-        <span class="sample-chip" data-id="titanic" data-target="survived" onclick="selectSample(this)">🚢 Titanic</span>
-        <span class="sample-chip" data-id="diabetes" data-target="outcome" onclick="selectSample(this)">🩺 Diabetes</span>
-        <span class="sample-chip" data-id="wine" data-target="quality" onclick="selectSample(this)">🍷 Wine</span>
-        <span class="sample-chip" data-id="heart" data-target="target" onclick="selectSample(this)">❤️ Heart Disease</span>
-        <span class="sample-chip" data-id="housing" data-target="price" onclick="selectSample(this)">🏠 Housing</span>
+    <div class="or-divider">or try a sample dataset</div>
+    <div class="samples-grid" id="samples-grid">
+      <button class="sc" onclick="loadSample('titanic')" id="sc-titanic">
+        <div class="sc-top"><span class="sc-icon">🚢</span><span class="sc-name">Titanic</span><span class="sc-badge cls">CLASS</span></div>
+        <div class="sc-desc">Survival prediction — missing values, imbalance</div>
+        <div class="sc-meta">891 rows · 12 cols</div>
+      </button>
+      <button class="sc" onclick="loadSample('iris')" id="sc-iris">
+        <div class="sc-top"><span class="sc-icon">🌸</span><span class="sc-name">Iris</span><span class="sc-badge cls">CLASS</span></div>
+        <div class="sc-desc">Classic multiclass — clean, structured</div>
+        <div class="sc-meta">150 rows · 5 cols</div>
+      </button>
+      <button class="sc" onclick="loadSample('wine')" id="sc-wine">
+        <div class="sc-top"><span class="sc-icon">🍷</span><span class="sc-name">Wine Quality</span><span class="sc-badge cls">CLASS</span></div>
+        <div class="sc-desc">Skewed features, class imbalance</div>
+        <div class="sc-meta">1599 rows · 12 cols</div>
+      </button>
+      <button class="sc" onclick="loadSample('diabetes')" id="sc-diabetes">
+        <div class="sc-top"><span class="sc-icon">🏥</span><span class="sc-name">Diabetes</span><span class="sc-badge cls">CLASS</span></div>
+        <div class="sc-desc">Zero-masking, Pima Indian dataset</div>
+        <div class="sc-meta">768 rows · 9 cols</div>
+      </button>
+      <button class="sc" onclick="loadSample('housing')" id="sc-housing">
+        <div class="sc-top"><span class="sc-icon">🏠</span><span class="sc-name">Boston Housing</span><span class="sc-badge reg">REG</span></div>
+        <div class="sc-desc">Price regression — outliers, multicollinearity</div>
+        <div class="sc-meta">506 rows · 14 cols</div>
+      </button>
+      <button class="sc" onclick="loadSample('heart')" id="sc-heart">
+        <div class="sc-top"><span class="sc-icon">❤️</span><span class="sc-name">Heart Disease</span><span class="sc-badge cls">CLASS</span></div>
+        <div class="sc-desc">Mixed types, missing values, binary target</div>
+        <div class="sc-meta">303 rows · 14 cols</div>
+      </button>
+    </div>
+    <div class="sample-status" id="sample-status">—</div>
+  </div>
+
+  <div class="features-row">
+    <span class="feat-chip">18 analysis modules</span>
+    <span class="feat-chip">auto target detection</span>
+    <span class="feat-chip">FAIR assessment</span>
+    <span class="feat-chip">anomaly detection</span>
+    <span class="feat-chip">SHAP explainability</span>
+    <span class="feat-chip">AutoML + ensembles</span>
+    <span class="feat-chip">what-if simulator</span>
+    <span class="feat-chip">pipeline executor</span>
+  </div>
+</div>
+
+<!-- LOADING SCREEN -->
+<div id="loading-screen">
+  <div class="spinner"></div>
+  <div class="loading-title">Running analysis...</div>
+  <div class="progress-track"><div class="progress-fill" id="prog-fill"></div></div>
+  <div class="loading-step" id="loading-msg">Initializing...</div>
+</div>
+
+<!-- REPORT -->
+<div id="report">
+  <div class="report-header">
+    <div class="rh-left">
+      <div class="rh-filename" id="r-filename">—</div>
+      <div class="rh-meta" id="r-meta">—</div>
+    </div>
+    <div class="rh-right">
+      <div class="score-block">
+        <div>
+          <div class="score-number" id="r-score">—</div>
+          <div class="score-label">Readiness / 100</div>
+        </div>
+        <div class="grade-circle" id="r-grade">?</div>
+      </div>
+      <button class="btn btn-ghost btn-sm" onclick="resetAll()">← New File</button>
+      <button class="btn btn-primary btn-sm" onclick="downloadPDF()">↓ PDF</button>
+    </div>
+  </div>
+
+  <div class="tab-bar" id="tab-bar">
+    <div class="tab active" data-tab="overview">Overview</div>
+    <div class="tab" data-tab="variables">Variables</div>
+    <div class="tab" data-tab="issues">Issues</div>
+    <div class="tab" data-tab="models">Models</div>
+    <div class="tab" data-tab="pipeline">Pipeline</div>
+    <div class="tab" data-tab="advanced">Advanced</div>
+    <div class="tab" data-tab="charts">Charts</div>
+  </div>
+
+  <!-- OVERVIEW TAB -->
+  <div class="pane active" id="pane-overview">
+    <div class="stats-row" id="stats-row"></div>
+    <div class="grid-2">
+      <div class="card">
+        <div class="card-head">🎯 Target Detection</div>
+        <div class="card-body" id="target-body"></div>
+      </div>
+      <div class="card">
+        <div class="card-head">📊 Quality Score <span id="quality-hdr" class="muted"></span></div>
+        <div class="card-body" id="quality-body"></div>
       </div>
     </div>
-
-    <!-- Target Column -->
-    <div class="row">
-      <label>Target Column:</label>
-      <input id="targetCol" placeholder="auto-detect if blank"/>
+    <div class="grid-2">
+      <div class="card">
+        <div class="card-head">✅ Positive Signals</div>
+        <div class="card-body" id="signals-body"></div>
+      </div>
+      <div class="card">
+        <div class="card-head">🔧 Module Health</div>
+        <div class="card-body"><div class="module-grid" id="module-grid"></div></div>
+      </div>
     </div>
-
-    <!-- Progress -->
-    <div id="progressWrap">
-      <div id="progressBar"><div id="progressFill"></div></div>
-      <div id="progressLabel">Uploading…</div>
-    </div>
-
-    <!-- Status -->
-    <div id="statusBanner"></div>
-
-    <!-- Buttons -->
-    <div style="display:flex;gap:10px;margin-top:16px;flex-wrap:wrap">
-      <button class="btn btn-primary" id="analyzeBtn" onclick="doAnalyze()">▶ Analyze</button>
-      <button class="btn btn-secondary" id="clearBtn" onclick="clearAll()" style="display:none">✕ Clear</button>
+    <div class="grid-2">
+      <div class="card">
+        <div class="card-head">🔍 FAIR Assessment</div>
+        <div class="card-body" id="fair-body"></div>
+      </div>
+      <div class="card">
+        <div class="card-head">🦠 Anomaly Detection</div>
+        <div class="card-body" id="anomaly-body"></div>
+      </div>
     </div>
   </div>
 
-  <!-- Results -->
-  <div id="results"></div>
-
-  <!-- History -->
-  <div class="card" id="historyCard" style="display:none">
-    <h2>Recent Reports</h2>
-    <div id="histList"></div>
+  <!-- VARIABLES TAB -->
+  <div class="pane" id="pane-variables">
+    <div class="card">
+      <div class="card-head">Column Analysis</div>
+      <div class="card-body no-pad">
+        <div style="overflow-x:auto">
+          <table class="tbl">
+            <thead><tr><th>Column</th><th>Type</th><th>Missing %</th><th>Unique</th><th>Mean / Top</th><th>Std / Entropy</th><th>Skew</th><th>Outliers</th><th>Suggestion</th></tr></thead>
+            <tbody id="vars-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-head">Feature Importance Ranking</div>
+      <div class="card-body no-pad">
+        <div style="overflow-x:auto">
+          <table class="tbl">
+            <thead><tr><th>Feature</th><th>RF Importance</th><th>Permutation</th><th>Tier</th><th>Agree</th><th>Note</th></tr></thead>
+            <tbody id="fi-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
   </div>
 
-</main>
+  <!-- ISSUES TAB -->
+  <div class="pane" id="pane-issues">
+    <div class="grid-2">
+      <div class="card">
+        <div class="card-head">⚠️ Issues <span id="issue-badges"></span></div>
+        <div class="card-body" id="issues-body"></div>
+      </div>
+      <div class="card">
+        <div class="card-head">📋 Action Plan</div>
+        <div class="card-body no-pad">
+          <table class="tbl"><thead><tr><th>#</th><th>Priority</th><th>Issue</th><th>Module</th></tr></thead>
+          <tbody id="action-body"></tbody></table>
+        </div>
+      </div>
+    </div>
+    <div class="grid-2">
+      <div class="card">
+        <div class="card-head">🔍 Leakage Analysis</div>
+        <div class="card-body" id="leakage-body"></div>
+      </div>
+      <div class="card">
+        <div class="card-head">🔗 Correlation Analysis</div>
+        <div class="card-body" id="corr-body"></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-head">📉 Overfitting Analysis</div>
+      <div class="card-body" id="overfit-body"></div>
+    </div>
+  </div>
+
+  <!-- MODELS TAB -->
+  <div class="pane" id="pane-models">
+    <div class="card">
+      <div class="card-head" id="models-head">Model Comparison</div>
+      <div class="card-body" id="models-body"></div>
+    </div>
+    <div class="grid-2">
+      <div class="card">
+        <div class="card-head">📊 CV Stability</div>
+        <div class="card-body" id="cv-body"></div>
+      </div>
+      <div class="card">
+        <div class="card-head">🔎 Recommendation</div>
+        <div class="card-body" id="rec-body"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- PIPELINE TAB -->
+  <div class="pane" id="pane-pipeline">
+    <div class="card">
+      <div class="card-head">🏗️ Preprocessing Pipeline <span id="pipeline-target" class="muted"></span></div>
+      <div class="card-body no-pad">
+        <div style="overflow-x:auto">
+          <table class="tbl"><thead><tr><th>Step</th><th>Column</th><th>Reason</th></tr></thead>
+          <tbody id="pipeline-body"></tbody></table>
+        </div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-head">Pipeline Summary</div>
+      <div class="card-body"><div class="stats-row" id="pipeline-stats" style="margin-bottom:0"></div></div>
+    </div>
+    <div class="card">
+      <div class="card-head">⬇️ Execute Pipeline
+        <button class="btn btn-primary btn-sm" id="exec-btn" onclick="executePipeline()">Download Cleaned CSV</button>
+      </div>
+      <div class="card-body">
+        <p class="muted">Applies the full pipeline (Drop → Impute → Transform → Encode → Scale) and returns a clean, ML-ready CSV.</p>
+        <div id="exec-status" style="margin-top:10px;font-size:11px;"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ADVANCED TAB -->
+  <div class="pane" id="pane-advanced">
+    <p class="muted" style="margin-bottom:16px;">Each tool runs independently on your dataset. Results appear below each card.</p>
+    <div class="tools-grid">
+      <div class="tool-card">
+        <div class="tool-icon">🔮</div>
+        <div class="tool-title">What-If Simulator</div>
+        <div class="tool-desc">Applies preprocessing fixes step by step, measuring ML score change at each stage.</div>
+        <button class="btn btn-primary btn-sm" onclick="runWhatIf(this)" data-orig="Run Simulation">Run Simulation</button>
+        <div class="tool-result" id="whatif-result"></div>
+      </div>
+      <div class="tool-card">
+        <div class="tool-icon">🤖</div>
+        <div class="tool-title">AutoML + Ensembles</div>
+        <div class="tool-desc">Tests all preprocessing × model combinations including Voting Ensembles. Finds the best config.</div>
+        <button class="btn btn-primary btn-sm" onclick="runAutoML(this)" data-orig="Run AutoML">Run AutoML</button>
+        <div class="tool-result" id="automl-result"></div>
+      </div>
+      <div class="tool-card">
+        <div class="tool-icon">🧠</div>
+        <div class="tool-title">SHAP Explainability</div>
+        <div class="tool-desc">SHapley Additive Explanations — global + local feature attribution using TreeExplainer.</div>
+        <button class="btn btn-primary btn-sm" onclick="runSHAP(this)" data-orig="Run SHAP">Run SHAP</button>
+        <div class="tool-result" id="shap-result"></div>
+      </div>
+      <div class="tool-card">
+        <div class="tool-icon">📝</div>
+        <div class="tool-title">NL Report</div>
+        <div class="tool-desc">Exports a plain-English text memo with all findings, scores, and recommended actions.</div>
+        <button class="btn btn-primary btn-sm" onclick="downloadNLReport(this)" data-orig="Download Report">Download Report</button>
+        <div class="tool-result" id="nl-result"></div>
+      </div>
+    </div>
+    <div class="card" id="whatif-detail" style="display:none">
+      <div class="card-head">What-If — Step by Step</div>
+      <div class="card-body no-pad">
+        <table class="tbl"><thead><tr><th>#</th><th>Fix Applied</th><th>Score</th><th>Δ Change</th><th>Impact</th></tr></thead>
+        <tbody id="whatif-tbody"></tbody></table>
+      </div>
+    </div>
+    <div class="card" id="automl-detail" style="display:none">
+      <div class="card-head">AutoML — Top Configurations</div>
+      <div class="card-body no-pad">
+        <table class="tbl"><thead><tr><th>Rank</th><th>Model</th><th>Score</th><th>Std</th><th>Impute</th><th>Log</th><th>Scaler</th><th>Ensemble</th></tr></thead>
+        <tbody id="automl-tbody"></tbody></table>
+      </div>
+    </div>
+    <div class="card" id="shap-detail" style="display:none">
+      <div class="card-head">SHAP — Global Feature Importance</div>
+      <div class="card-body" id="shap-bars"></div>
+    </div>
+  </div>
+
+  <!-- CHARTS TAB -->
+  <div class="pane" id="pane-charts">
+    <div class="grid-2">
+      <div class="card">
+        <div class="card-head">Quality Dimensions (Radar)</div>
+        <div class="card-body"><div class="chart-wrap"><canvas id="radar-chart"></canvas></div></div>
+      </div>
+      <div class="card">
+        <div class="card-head">Model Performance</div>
+        <div class="card-body"><div class="chart-wrap"><canvas id="model-chart"></canvas></div></div>
+      </div>
+    </div>
+    <div class="grid-2">
+      <div class="card">
+        <div class="card-head">Feature Importance (RF)</div>
+        <div class="card-body"><div class="chart-wrap"><canvas id="fi-chart"></canvas></div></div>
+      </div>
+      <div class="card">
+        <div class="card-head">Missing Values by Column</div>
+        <div class="card-body"><div class="chart-wrap"><canvas id="missing-chart"></canvas></div></div>
+      </div>
+    </div>
+  </div>
 </div>
 
 <script>
-// ── CONFIG ────────────────────────────────────────────────────────────────────
-// IMPORTANT: Set this to your actual Render backend URL
-const API = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
-  ? 'http://localhost:8000'
-  : 'https://data-prep-assistant.onrender.com';
+// ══════════════════════════════════════════════════════════════════════
+// CONFIG
+// ══════════════════════════════════════════════════════════════════════
+const API = 'http://localhost:8000';
+let selectedFile = null, lastData = null, charts = {}, activeSample = null;
 
-// ── STATE ─────────────────────────────────────────────────────────────────────
-let token    = null;
-let user     = null;
-let selFile  = null;
-let selSample = null; // { id, target }
+const SAMPLE_URLS = {
+  titanic: { url:'https://raw.githubusercontent.com/datasciencedojo/datasets/master/titanic.csv', name:'titanic.csv', target:'Survived' },
+  iris:    { url:'https://raw.githubusercontent.com/mwaskom/seaborn-data/master/iris.csv', name:'iris.csv', target:'species' },
+  wine:    { url:'https://raw.githubusercontent.com/datasciencedojo/datasets/master/winequality-red.csv', name:'wine_quality.csv', target:'quality' },
+  diabetes:{ url:'https://raw.githubusercontent.com/jbrownlee/Datasets/master/pima-indians-diabetes.data.csv', name:'diabetes.csv', target:null },
+  housing: { url:'https://raw.githubusercontent.com/selva86/datasets/master/BostonHousing.csv', name:'boston_housing.csv', target:'medv' },
+  heart:   { url:'https://raw.githubusercontent.com/datasciencedojo/datasets/master/heart.csv', name:'heart_disease.csv', target:'target' },
+};
 
-// ── INIT ──────────────────────────────────────────────────────────────────────
-(function init() {
-  try {
-    const saved = localStorage.getItem('ml_auth');
-    if (saved) {
-      const parsed = JSON.parse(saved);
-      if (parsed && parsed.token && parsed.user) {
-        token = parsed.token;
-        user  = parsed.user;
-        showApp();
-      }
-    }
-  } catch(e) {
-    localStorage.removeItem('ml_auth');
-  }
-  setupDragDrop();
-})();
+// ══════════════════════════════════════════════════════════════════════
+// API HEALTH CHECK
+// ══════════════════════════════════════════════════════════════════════
+fetch(API+'/health').then(r=>r.json()).then(()=>{
+  document.getElementById('api-dot').classList.remove('offline');
+  document.getElementById('api-text').textContent = 'API Online';
+}).catch(()=>{
+  document.getElementById('api-dot').classList.add('offline');
+  document.getElementById('api-text').textContent = 'API Offline';
+});
 
-function setupDragDrop() {
-  const zone = document.getElementById('dropZone');
-  const inp  = document.getElementById('fileInput');
+// ══════════════════════════════════════════════════════════════════════
+// FILE HANDLING
+// ══════════════════════════════════════════════════════════════════════
+const fileInput = document.getElementById('file-input');
+const dropzone  = document.getElementById('dropzone');
 
-  zone.addEventListener('dragover', function(e) {
-    e.preventDefault();
-    e.stopPropagation();
-    zone.classList.add('drag-over');
-  });
-  zone.addEventListener('dragleave', function(e) {
-    e.preventDefault();
-    zone.classList.remove('drag-over');
-  });
-  zone.addEventListener('drop', function(e) {
-    e.preventDefault();
-    e.stopPropagation();
-    zone.classList.remove('drag-over');
-    const f = e.dataTransfer.files[0];
-    if (f) handleFileSelected(f);
-  });
-  inp.addEventListener('change', function() {
-    if (this.files[0]) handleFileSelected(this.files[0]);
-  });
+fileInput.addEventListener('change', e => setFile(e.target.files[0]));
+dropzone.addEventListener('dragover',  e => { e.preventDefault(); dropzone.classList.add('drag'); });
+dropzone.addEventListener('dragleave', () => dropzone.classList.remove('drag'));
+dropzone.addEventListener('drop', e => {
+  e.preventDefault(); dropzone.classList.remove('drag');
+  setFile(e.dataTransfer.files[0]);
+});
+
+function setFile(f) {
+  if (!f) return;
+  selectedFile = f;
+  const pill = document.getElementById('file-pill');
+  document.getElementById('file-pill-text').textContent = `${f.name} — ${(f.size/1024).toFixed(0)} KB`;
+  pill.classList.add('show');
+  document.getElementById('analyze-btn').disabled = false;
+  activeSample = null;
+  document.querySelectorAll('.sc').forEach(c => c.classList.remove('active'));
 }
 
-function handleFileSelected(f) {
-  const allowed = ['.csv', '.xlsx', '.xls'];
-  const ext = f.name.toLowerCase().slice(f.name.lastIndexOf('.'));
-  if (!allowed.includes(ext)) {
-    showStatus('Only .csv, .xlsx, .xls files are supported.', 'err');
+// ══════════════════════════════════════════════════════════════════════
+// SAMPLE DATASETS
+// ══════════════════════════════════════════════════════════════════════
+async function loadSample(key) {
+  const ds = SAMPLE_URLS[key];
+  if (!ds) return;
+
+  if (activeSample === key) {
+    activeSample = null; selectedFile = null;
+    document.querySelectorAll('.sc').forEach(c => c.classList.remove('active'));
+    document.getElementById('file-pill').classList.remove('show');
+    document.getElementById('analyze-btn').disabled = true;
+    document.getElementById('target-col').value = '';
     return;
   }
-  selFile   = f;
-  selSample = null;
-  // Deselect sample chips
-  document.querySelectorAll('.sample-chip').forEach(c => c.classList.remove('selected'));
-  document.getElementById('fileSelected').textContent = '✓ ' + f.name + ' (' + (f.size/1024).toFixed(1) + ' KB)';
-  hideStatus();
-}
 
-function selectSample(el) {
-  selFile   = null;
-  selSample = { id: el.dataset.id, target: el.dataset.target };
-  document.querySelectorAll('.sample-chip').forEach(c => c.classList.remove('selected'));
-  el.classList.add('selected');
-  document.getElementById('fileSelected').textContent = '';
-  document.getElementById('fileInput').value = '';
-  // Set target column hint
-  const tc = document.getElementById('targetCol');
-  if (!tc.value) tc.value = el.dataset.target;
-  hideStatus();
-}
+  document.querySelectorAll('.sc').forEach(c => c.classList.remove('active'));
+  document.getElementById('sc-'+key).classList.add('active');
+  activeSample = key;
 
-// ── AUTH ──────────────────────────────────────────────────────────────────────
-function switchTab(tab) {
-  document.getElementById('loginForm').style.display    = tab === 'login'    ? '' : 'none';
-  document.getElementById('registerForm').style.display = tab === 'register' ? '' : 'none';
-  document.querySelectorAll('.tab').forEach((t,i) => t.classList.toggle('active', (i===0&&tab==='login')||(i===1&&tab==='register')));
-  document.getElementById('loginErr').style.display = 'none';
-  document.getElementById('regErr').style.display   = 'none';
-}
-
-function showAuthErr(formId, msg) {
-  const el = document.getElementById(formId);
-  el.textContent = msg;
-  el.style.display = 'block';
-}
-
-async function doLogin() {
-  const email = document.getElementById('loginEmail').value.trim();
-  const pass  = document.getElementById('loginPassword').value;
-  document.getElementById('loginErr').style.display = 'none';
-
-  if (!email) { showAuthErr('loginErr','Enter your email'); return; }
-  if (!pass)  { showAuthErr('loginErr','Enter your password'); return; }
-
-  const btn = document.getElementById('loginBtn');
-  btn.disabled = true; btn.textContent = 'Logging in…';
+  const st = document.getElementById('sample-status');
+  st.style.display = 'block'; st.style.color = 'var(--text2)';
+  st.textContent = `⏳ Loading ${key}...`;
 
   try {
-    const res = await fetch(API + '/auth/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password: pass })
-    });
+    const res = await fetch(ds.url);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const csv = await res.text();
+    const blob = new Blob([csv], { type:'text/csv' });
+    selectedFile = new File([blob], ds.name, { type:'text/csv' });
+
+    document.getElementById('target-col').value = ds.target || '';
+    document.getElementById('file-pill-text').textContent = `${ds.name} (${(csv.length/1024).toFixed(0)} KB)`;
+    document.getElementById('file-pill').classList.add('show');
+    document.getElementById('analyze-btn').disabled = false;
+
+    st.style.color = 'var(--green)';
+    st.textContent = `✓ ${key} ready — click Analyze →`;
+    setTimeout(() => { st.style.display = 'none'; }, 3000);
+  } catch(e) {
+    st.style.color = 'var(--red)';
+    st.textContent = `✗ Failed to load. Check connection.`;
+    document.getElementById('sc-'+key).classList.remove('active');
+    activeSample = null;
+    setTimeout(() => { st.style.display = 'none'; }, 3000);
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// RUN ANALYSIS
+// ══════════════════════════════════════════════════════════════════════
+async function runAnalysis() {
+  if (!selectedFile) return;
+  const tc = document.getElementById('target-col').value.trim();
+  const fd = new FormData(); fd.append('file', selectedFile);
+  let url = API+'/upload'; if (tc) url += '?target_column=' + encodeURIComponent(tc);
+
+  document.getElementById('upload-screen').style.display = 'none';
+  document.getElementById('loading-screen').style.display = 'block';
+
+  // Animate loading steps
+  const steps = ['Loading dataset...','Detecting target column...','Analyzing features...','Scoring data quality...','Checking correlations...','Leakage analysis...','Running FAIR assessment...','Detecting anomalies...','Training ML models (5-fold CV)...','Feature importance (RF + permutation)...','Overfitting analysis...','Building preprocessing pipeline...','Generating report...'];
+  let si = 0;
+  const iv = setInterval(() => {
+    document.getElementById('loading-msg').textContent = steps[Math.min(si++, steps.length-1)];
+  }, 2200);
+
+  try {
+    const res = await fetch(url, { method:'POST', body:fd });
     const data = await res.json();
-    if (!res.ok) {
-      showAuthErr('loginErr', data.detail || data.error || data.message || 'Login failed');
-      return;
-    }
-    saveAuth(data);
-    showApp();
+    clearInterval(iv);
+    if (data.detail) { alert('Error: ' + data.detail); resetAll(); return; }
+    lastData = data;
+    renderAll(data);
   } catch(e) {
-    showAuthErr('loginErr', 'Cannot connect to server. Check your connection.');
-  } finally {
-    btn.disabled = false; btn.textContent = 'Login';
+    clearInterval(iv);
+    alert('Cannot connect to backend.\n\nStart it with:\n  cd backend\n  pip install -r requirements.txt\n  uvicorn app.main:app --reload');
+    resetAll();
   }
 }
 
-async function doRegister() {
-  const name  = document.getElementById('regName').value.trim();
-  const email = document.getElementById('regEmail').value.trim();
-  const pass  = document.getElementById('regPassword').value;
-  document.getElementById('regErr').style.display = 'none';
+// ══════════════════════════════════════════════════════════════════════
+// RENDER ALL
+// ══════════════════════════════════════════════════════════════════════
+function renderAll(d) {
+  document.getElementById('loading-screen').style.display = 'none';
+  document.getElementById('report').style.display = 'block';
 
-  if (!name)  { showAuthErr('regErr','Enter your name'); return; }
-  if (!email) { showAuthErr('regErr','Enter your email'); return; }
-  if (!pass || pass.length < 6) { showAuthErr('regErr','Password must be at least 6 characters'); return; }
+  const er = d.explainability_report;
+  const ds = d.dataset_summary;
 
-  const btn = document.getElementById('regBtn');
-  btn.disabled = true; btn.textContent = 'Creating account…';
+  // Header
+  document.getElementById('r-filename').textContent = selectedFile ? selectedFile.name : 'Dataset';
+  document.getElementById('r-meta').textContent = `${ds.rows.toLocaleString()} rows × ${ds.columns} columns · ${ds.memory_usage_mb.toFixed(2)} MB`;
+  document.getElementById('r-score').textContent = er.readiness_score.toFixed(0);
+  const gb = document.getElementById('r-grade');
+  gb.textContent = er.grade;
+  gb.className = 'grade-circle g-' + er.grade;
 
-  try {
-    const res = await fetch(API + '/auth/register', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, email, password: pass })
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      showAuthErr('regErr', data.detail || data.error || data.message || 'Registration failed');
-      return;
-    }
-    saveAuth(data);
-    showApp();
-  } catch(e) {
-    showAuthErr('regErr', 'Cannot connect to server. Check your connection.');
-  } finally {
-    btn.disabled = false; btn.textContent = 'Create Account';
-  }
+  renderStats(ds);
+  renderTarget(d.target_detection);
+  renderQuality(d.dataset_quality_score);
+  renderSignals(er.positive_signals || []);
+  renderModuleHealth(er.module_health || {});
+  renderFAIR(d.fair_assessment);
+  renderAnomaly(d.anomaly_detection);
+  renderVariables(d.feature_analysis, d.feature_importance);
+  renderIssues(er);
+  renderLeakage(d.data_leakage_analysis);
+  renderCorrelation(d.correlation_analysis);
+  renderOverfitting(d.overfitting_analysis);
+  renderModels(d.auto_training_results, d.cross_validation, d.model_recommendation);
+  renderPipeline(d.recommended_pipeline);
 }
 
-function saveAuth(data) {
-  token = data.access_token;
-  user  = data.user;
-  try { localStorage.setItem('ml_auth', JSON.stringify({ token, user })); } catch(e) {}
+// ══════════════════════════════════════════════════════════════════════
+// TAB NAVIGATION
+// ══════════════════════════════════════════════════════════════════════
+document.getElementById('tab-bar').addEventListener('click', e => {
+  const tab = e.target.closest('.tab'); if (!tab) return;
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.pane').forEach(p => p.classList.remove('active'));
+  tab.classList.add('active');
+  document.getElementById('pane-' + tab.dataset.tab).classList.add('active');
+  if (tab.dataset.tab === 'charts' && lastData) setTimeout(() => renderCharts(lastData), 80);
+});
+
+// ══════════════════════════════════════════════════════════════════════
+// RENDER FUNCTIONS
+// ══════════════════════════════════════════════════════════════════════
+
+function renderStats(ds) {
+  const cells = [
+    ['Rows', ds.rows.toLocaleString()],
+    ['Columns', ds.columns],
+    ['Missing', ds.missing_values.toLocaleString()],
+    ['Miss %', ds.missing_value_percent.toFixed(1)+'%'],
+    ['Duplicates', ds.duplicate_rows],
+    ['Numeric', (ds.numeric_columns||[]).length],
+    ['Categorical', (ds.categorical_columns||[]).length],
+    ['MB', ds.memory_usage_mb.toFixed(2)],
+  ];
+  document.getElementById('stats-row').innerHTML = cells.map(([l,v]) =>
+    `<div class="stat-cell"><div class="stat-v">${v}</div><div class="stat-l">${l}</div></div>`
+  ).join('');
 }
 
-function skipAuth() {
-  document.getElementById('authOverlay').style.display = 'none';
-  loadHistory();
+function renderTarget(t) {
+  const conf = Math.round((t.confidence || 0) * 100);
+  const cc = conf >= 70 ? 'var(--green)' : conf >= 40 ? 'var(--orange)' : 'var(--red)';
+  const taskMap = {
+    classification_binary: 'Binary Classification',
+    classification_multiclass: 'Multiclass Classification',
+    regression: 'Regression',
+  };
+  document.getElementById('target-body').innerHTML = `
+    <div class="info-row"><div class="info-key">Column</div><div class="info-val mono">${t.final_target}</div></div>
+    <div class="info-row"><div class="info-key">Task Type</div><div class="info-val">${taskMap[t.task_type] || t.task_type}</div></div>
+    <div class="info-row"><div class="info-key">Source</div><div class="info-val">${t.target_source === 'user_specified' ? '👤 User specified' : '🤖 Auto-detected'}</div></div>
+    <div class="info-row"><div class="info-key">Confidence</div><div class="info-val" style="color:${cc}">${conf}%</div></div>
+    ${t.warning ? `<div style="color:var(--orange);font-size:11px;margin-top:8px;padding:7px 10px;background:rgba(243,156,18,.08);border-radius:var(--r);border:1px solid rgba(243,156,18,.2)">⚠ ${t.warning}</div>` : ''}
+    <div class="muted" style="margin-top:10px">Override: <span class="mono" style="color:var(--accent2)">?target_column=NAME</span></div>`;
 }
 
-function doLogout() {
-  token = null; user = null;
-  try { localStorage.removeItem('ml_auth'); } catch(e) {}
-  document.getElementById('authOverlay').style.display = 'flex';
-  document.getElementById('userBar').style.display = 'none';
-  document.getElementById('historyCard').style.display = 'none';
-  document.getElementById('results').style.display = 'none';
-  document.getElementById('results').innerHTML = '';
-  clearAll();
-}
-
-function showApp() {
-  document.getElementById('authOverlay').style.display = 'none';
-  if (user) {
-    document.getElementById('userBar').style.display = 'flex';
-    document.getElementById('userName').textContent = user.name || user.email;
-  }
-  loadHistory();
-}
-
-// ── ANALYZE ───────────────────────────────────────────────────────────────────
-async function doAnalyze() {
-  if (!selFile && !selSample) {
-    showStatus('Please select a file or choose a sample dataset.', 'err');
-    return;
-  }
-
-  const target = document.getElementById('targetCol').value.trim();
-  const btn    = document.getElementById('analyzeBtn');
-  btn.disabled = true;
-  btn.textContent = '⏳ Analyzing…';
-  showProgress(0, 'Starting analysis…');
-  hideStatus();
-  document.getElementById('results').style.display = 'none';
-  document.getElementById('clearBtn').style.display = 'none';
-
-  try {
-    let url, fetchOpts;
-
-    if (selSample) {
-      // ── Sample dataset path ──────────────────────────────────────────────
-      url = API + '/sample/' + selSample.id;
-      if (target) url += '?target_column=' + encodeURIComponent(target);
-      showProgress(30, 'Loading sample dataset…');
-
-      const headers = {};
-      if (token) headers['Authorization'] = 'Bearer ' + token;
-
-      const res = await fetch(url, { method: 'POST', headers });
-      showProgress(80, 'Processing…');
-      await handleAnalysisResponse(res);
-
-    } else {
-      // ── File upload path ─────────────────────────────────────────────────
-      url = API + '/upload';
-      if (target) url += '?target_column=' + encodeURIComponent(target);
-      showProgress(20, 'Uploading file…');
-
-      // CRITICAL: Do NOT set Content-Type — browser must set multipart/form-data with boundary
-      const fd = new FormData();
-      fd.append('file', selFile, selFile.name);
-
-      const headers = {};
-      if (token) headers['Authorization'] = 'Bearer ' + token;
-
-      const res = await fetch(url, { method: 'POST', headers, body: fd });
-      showProgress(80, 'Running ML analysis…');
-      await handleAnalysisResponse(res);
-    }
-
-  } catch(e) {
-    hideProgress();
-    showStatus('Network error: ' + e.message, 'err');
-  } finally {
-    btn.disabled = false;
-    btn.textContent = '▶ Analyze';
-  }
-}
-
-async function handleAnalysisResponse(res) {
-  let data;
-  const ct = res.headers.get('content-type') || '';
-
-  if (ct.includes('application/json')) {
-    data = await res.json();
-  } else {
-    const text = await res.text();
-    hideProgress();
-    showStatus('Server error (' + res.status + '): ' + text.slice(0, 300), 'err');
-    return;
-  }
-
-  hideProgress();
-
-  if (!res.ok) {
-    const msg = data.detail || data.error || data.message || JSON.stringify(data);
-    showStatus('Analysis failed: ' + msg, 'err');
-    return;
-  }
-
-  if (data.error) {
-    showStatus('Analysis error: ' + data.error, 'err');
-    return;
-  }
-
-  showStatus('Analysis complete!', 'ok');
-  document.getElementById('clearBtn').style.display = '';
-  renderResults(data);
-  loadHistory();
-}
-
-function clearAll() {
-  selFile   = null;
-  selSample = null;
-  document.getElementById('fileInput').value = '';
-  document.getElementById('fileSelected').textContent = '';
-  document.getElementById('targetCol').value = '';
-  document.querySelectorAll('.sample-chip').forEach(c => c.classList.remove('selected'));
-  document.getElementById('results').style.display = 'none';
-  document.getElementById('results').innerHTML = '';
-  document.getElementById('clearBtn').style.display = 'none';
-  hideStatus();
-}
-
-// ── PROGRESS ──────────────────────────────────────────────────────────────────
-function showProgress(pct, label) {
-  document.getElementById('progressWrap').style.display = '';
-  document.getElementById('progressFill').style.width = pct + '%';
-  document.getElementById('progressLabel').textContent = label;
-}
-function hideProgress() {
-  document.getElementById('progressWrap').style.display = 'none';
-}
-
-// ── STATUS ────────────────────────────────────────────────────────────────────
-function showStatus(msg, type) {
-  const el = document.getElementById('statusBanner');
-  el.textContent = msg;
-  el.className = type === 'err' ? 'status-err' : type === 'ok' ? 'status-ok' : 'status-info';
-  el.style.display = 'block';
-}
-function hideStatus() {
-  document.getElementById('statusBanner').style.display = 'none';
-}
-
-// ── RENDER RESULTS ────────────────────────────────────────────────────────────
-function renderResults(d) {
-  const ds  = d.dataset_summary       || {};
-  const qs  = d.dataset_quality_score || {};
-  const er  = d.explainability_report || {};
-  const at  = d.auto_training_results || {};
-  const td  = d.target_detection      || {};
-  const fa  = d.feature_analysis      || {};
-  const ca  = d.correlation_analysis  || {};
-  const pp  = d.preprocessing_advice  || {};
-  const dl  = d.data_leakage_analysis || {};
-  const mr  = d.model_recommendation  || {};
-  const fi  = d.feature_importance    || {};
-  const cv  = d.cross_validation      || {};
-  const of  = d.overfitting_analysis  || {};
-  const sfs = d.smart_feature_selection || {};
-  const ad  = d.anomaly_detection     || {};
-
-  function badge(v) {
-    if (!v) return '';
-    const lv = String(v).toLowerCase();
-    if (['excellent','good','passed','low risk','stable'].includes(lv)) return `<span class="badge badge-green">${v}</span>`;
-    if (['moderate','medium','warning'].includes(lv)) return `<span class="badge badge-yellow">${v}</span>`;
-    if (['poor','failed','high risk','unstable'].includes(lv)) return `<span class="badge badge-red">${v}</span>`;
-    return `<span class="badge badge-blue">${v}</span>`;
-  }
-
-  function section(title, content) {
-    const id = 'sec_' + Math.random().toString(36).slice(2);
-    return `
-      <div>
-        <div class="collapsible" onclick="toggleSection('${id}',this)">
-          ${title} <span class="arrow">▶</span>
-        </div>
-        <div class="collapse-body" id="${id}">${content}</div>
-      </div>`;
-  }
-
-  function kv(obj, keys) {
-    if (!obj || !keys) return '';
-    return `<table>${keys.map(([k,lbl]) => {
-      const v = obj[k];
-      if (v === undefined || v === null) return '';
-      return `<tr><td style="width:50%;color:#555;font-size:12px">${lbl}</td><td><strong>${v}</strong></td></tr>`;
-    }).filter(Boolean).join('')}</table>`;
-  }
-
-  // Score boxes
-  const scores = `
-    <div class="score-grid">
-      <div class="score-box">
-        <div class="val">${er.readiness_score ?? qs.overall_score ?? '—'}</div>
-        <div class="lbl">Readiness Score</div>
-        <div class="sub">${badge(er.grade || qs.status || '')}</div>
-      </div>
-      <div class="score-box">
-        <div class="val">${ds.rows ?? '—'}</div>
-        <div class="lbl">Rows</div>
-        <div class="sub">${ds.columns ?? ''} columns</div>
-      </div>
-      <div class="score-box">
-        <div class="val">${ds.missing_value_percent ?? '—'}%</div>
-        <div class="lbl">Missing Values</div>
-        <div class="sub">${ds.missing_values ?? ''} total</div>
-      </div>
-      <div class="score-box">
-        <div class="val">${at.best_score !== undefined ? (typeof at.best_score === 'number' ? at.best_score.toFixed(3) : at.best_score) : '—'}</div>
-        <div class="lbl">Best Model Score</div>
-        <div class="sub">${at.best_model || ''}</div>
-      </div>
+function renderQuality(q) {
+  const colorMap = {
+    completeness: '--accent', uniqueness: '--green', consistency: '--orange',
+    class_balance: '--purple', feature_quality: '--teal', adequacy: '--yellow'
+  };
+  document.getElementById('quality-hdr').textContent = `${q.overall_score}/100 — ${q.status}`;
+  document.getElementById('quality-body').innerHTML = Object.entries(q.dimension_scores).map(([k,v]) => {
+    const c = `var(${colorMap[k] || '--accent'})`;
+    const vc = v >= 80 ? 'var(--green)' : v >= 60 ? 'var(--orange)' : 'var(--red)';
+    return `<div class="bar-row">
+      <div class="bar-lbl">${k.replace('_',' ')}</div>
+      <div class="bar-track"><div class="bar-fill" style="width:${v}%;background:${c}"></div></div>
+      <div class="bar-val" style="color:${vc}">${v.toFixed(0)}</div>
     </div>`;
-
-  // Target
-  const targetInfo = section('🎯 Target Detection', kv(td, [
-    ['final_target','Target Column'],
-    ['target_source','Detection Method'],
-    ['task_type','Task Type'],
-    ['predicted_target','Auto-Detected'],
-  ]));
-
-  // Dataset summary
-  const summaryInfo = section('📊 Dataset Summary', kv(ds, [
-    ['rows','Rows'],
-    ['columns','Columns'],
-    ['missing_values','Missing Values'],
-    ['missing_value_percent','Missing %'],
-    ['duplicate_rows','Duplicate Rows'],
-    ['memory_usage_mb','Memory (MB)'],
-  ]));
-
-  // Quality
-  const qualityInfo = section('⭐ Data Quality Score', `
-    ${kv(qs, [
-      ['overall_score','Overall Score'],
-      ['status','Status'],
-      ['completeness_score','Completeness'],
-      ['consistency_score','Consistency'],
-      ['balance_score','Balance'],
-    ])}
-    ${Array.isArray(qs.issues) && qs.issues.length ? `
-      <div class="section-title" style="margin-top:10px">Issues Found</div>
-      <ul style="padding-left:18px;font-size:13px;color:#444">
-        ${qs.issues.map(i => `<li style="margin-bottom:4px">${typeof i === 'string' ? i : JSON.stringify(i)}</li>`).join('')}
-      </ul>` : ''}
-  `);
-
-  // Auto-training
-  const trainingInfo = section('🤖 Auto Training Results', `
-    ${kv(at, [
-      ['task_type','Task Type'],
-      ['best_model','Best Model'],
-      ['best_score','Best Score'],
-      ['primary_metric','Metric'],
-      ['training_rows','Training Rows'],
-    ])}
-    ${Array.isArray(at.all_results) ? `
-      <div class="section-title" style="margin-top:10px">All Models</div>
-      <table>
-        <tr><th>Model</th><th>Score</th><th>Status</th></tr>
-        ${at.all_results.map(r => `
-          <tr>
-            <td>${r.model || r.name || ''}</td>
-            <td>${typeof r.score === 'number' ? r.score.toFixed(4) : (r.score || '—')}</td>
-            <td>${badge(r.status || 'ok')}</td>
-          </tr>`).join('')}
-      </table>` : ''}
-  `);
-
-  // Cross Validation
-  const cvInfo = section('🔄 Cross Validation', kv(cv, [
-    ['mean_score','Mean Score'],
-    ['std_score','Std Dev'],
-    ['stability','Stability'],
-    ['folds','Folds'],
-    ['best_model','Best Model'],
-  ]));
-
-  // Overfitting
-  const ofInfo = section('📉 Overfitting Analysis', kv(of, [
-    ['status','Status'],
-    ['train_score','Train Score'],
-    ['val_score','Validation Score'],
-    ['gap','Gap'],
-    ['verdict','Verdict'],
-  ]));
-
-  // Feature importance
-  let fiRows = '';
-  const fiList = fi.top_features || fi.features || [];
-  if (Array.isArray(fiList) && fiList.length) {
-    fiRows = `<table>
-      <tr><th>Feature</th><th>Importance</th></tr>
-      ${fiList.slice(0,15).map(f => `
-        <tr>
-          <td>${f.feature || f.name || f}</td>
-          <td>${typeof f.importance === 'number' ? f.importance.toFixed(4) : (f.importance || f.score || '—')}</td>
-        </tr>`).join('')}
-    </table>`;
-  }
-  const fiInfo = section('📌 Feature Importance', fiRows || '<p style="color:#888;font-size:13px">No feature importance data available.</p>');
-
-  // Preprocessing
-  let ppRows = '';
-  const ppList = pp.suggestions || pp.recommendations || (Array.isArray(pp) ? pp : []);
-  if (Array.isArray(ppList) && ppList.length) {
-    ppRows = ppList.map(s => `<div style="padding:6px 0;border-bottom:1px solid #f0f0f0;font-size:13px">
-      ${typeof s === 'string' ? s : (s.suggestion || s.message || s.text || JSON.stringify(s))}
-    </div>`).join('');
-  }
-  const ppInfo = section('🔧 Preprocessing Suggestions', ppRows || kv(pp, [
-    ['missing_values_strategy','Missing Values Strategy'],
-    ['scaling','Scaling'],
-    ['encoding','Encoding'],
-  ]) || '<p style="color:#888;font-size:13px">No preprocessing suggestions.</p>');
-
-  // Leakage
-  const dlInfo = section('🚨 Data Leakage Analysis', kv(dl, [
-    ['risk_level','Risk Level'],
-    ['leakage_detected','Leakage Detected'],
-    ['suspicious_features','Suspicious Features'],
-    ['recommendation','Recommendation'],
-  ]));
-
-  // Model recommendation
-  const mrInfo = section('💡 Model Recommendation', kv(mr, [
-    ['recommended_model','Recommended Model'],
-    ['task_type','Task Type'],
-    ['reason','Reason'],
-    ['alternative','Alternative'],
-  ]));
-
-  // Anomaly detection
-  const adInfo = section('🔍 Anomaly Detection', kv(ad, [
-    ['anomalies_found','Anomalies Found'],
-    ['anomaly_count','Anomaly Count'],
-    ['anomaly_percent','Anomaly %'],
-    ['method','Method'],
-  ]));
-
-  // Smart feature selection
-  const sfsInfo = section('✂️ Smart Feature Selection', `
-    ${kv(sfs, [
-      ['selected_count','Selected Features'],
-      ['removed_count','Removed Features'],
-      ['method','Method'],
-    ])}
-    ${Array.isArray(sfs.selected_features) ? `
-      <div style="margin-top:8px;font-size:12px;color:#555">
-        <strong>Selected:</strong> ${sfs.selected_features.slice(0,20).join(', ')}
-      </div>` : ''}
-  `);
-
-  // Explainability
-  let explainHtml = '';
-  if (er.recommendations && Array.isArray(er.recommendations)) {
-    explainHtml = `<div class="section-title">Recommendations</div>
-      <ul style="padding-left:18px;font-size:13px;color:#444">
-        ${er.recommendations.map(r => `<li style="margin-bottom:5px">${typeof r === 'string' ? r : (r.text || r.message || JSON.stringify(r))}</li>`).join('')}
-      </ul>`;
-  }
-  const explainInfo = section('📝 Explainability Report', `
-    ${kv(er, [
-      ['readiness_score','Readiness Score'],
-      ['grade','Grade'],
-      ['summary','Summary'],
-    ])}
-    ${explainHtml}
-  `);
-
-  const html = `
-    <div class="card">
-      <h2>Analysis Results</h2>
-      ${scores}
-      ${targetInfo}
-      ${summaryInfo}
-      ${qualityInfo}
-      ${trainingInfo}
-      ${cvInfo}
-      ${ofInfo}
-      ${fiInfo}
-      ${ppInfo}
-      ${dlInfo}
-      ${mrInfo}
-      ${adInfo}
-      ${sfsInfo}
-      ${explainInfo}
-    </div>`;
-
-  const el = document.getElementById('results');
-  el.innerHTML = html;
-  el.style.display = 'block';
-  el.scrollIntoView({ behavior: 'smooth' });
-}
-
-function toggleSection(id, el) {
-  const body = document.getElementById(id);
-  const isOpen = body.classList.toggle('open');
-  el.classList.toggle('open', isOpen);
-  el.querySelector('.arrow').textContent = isOpen ? '▼' : '▶';
-}
-
-// ── HISTORY ───────────────────────────────────────────────────────────────────
-async function loadHistory() {
-  if (!token) return;
-  try {
-    const res = await fetch(API + '/reports', {
-      headers: { 'Authorization': 'Bearer ' + token }
-    });
-    if (!res.ok) return;
-    const data = await res.json();
-    renderHistory(data.reports || []);
-  } catch(e) {}
-}
-
-function renderHistory(reports) {
-  const card = document.getElementById('historyCard');
-  const list = document.getElementById('histList');
-  if (!reports.length) { card.style.display = 'none'; return; }
-
-  card.style.display = 'block';
-  list.innerHTML = reports.map(r => {
-    const s = r.summary || {};
-    return `
-      <div class="hist-item">
-        <div>
-          <div class="name">${r.filename}</div>
-          <div class="meta">${new Date(r.created_at).toLocaleDateString()} • ${s.rows || '?'} rows • ${s.readiness_grade || '?'} grade</div>
-        </div>
-        <div class="hist-actions">
-          <button class="btn btn-secondary btn-sm" onclick="viewReport('${r.id}')">View</button>
-          <button class="btn btn-danger btn-sm" onclick="deleteReport('${r.id}')">🗑</button>
-        </div>
-      </div>`;
   }).join('');
 }
 
-async function viewReport(id) {
-  showProgress(50, 'Loading report…');
-  try {
-    const res = await fetch(API + '/reports/' + id, {
-      headers: { 'Authorization': 'Bearer ' + token }
+function renderSignals(signals) {
+  document.getElementById('signals-body').innerHTML = signals.length
+    ? signals.map(s => `<div class="signal-item"><span class="sig-check">✓</span><span>${s}</span></div>`).join('')
+    : '<p class="muted">No positive signals identified.</p>';
+}
+
+function renderModuleHealth(h) {
+  document.getElementById('module-grid').innerHTML = Object.entries(h).map(([mod, info]) => `
+    <div class="module-item">
+      <div class="m-dot ${info.status === 'CLEAN' ? 'ok' : 'bad'}"></div>
+      <div class="m-name">${mod.replace(/_/g,' ')}</div>
+      <div class="m-cnt">${info.issues_found > 0 ? info.issues_found+'i' : '✓'}</div>
+    </div>`).join('');
+}
+
+function renderFAIR(f) {
+  if (!f) { document.getElementById('fair-body').innerHTML = '<p class="muted">Not available.</p>'; return; }
+  const colorMap = { findable:'--accent', accessible:'--green', interoperable:'--orange', reusable:'--teal' };
+  document.getElementById('fair-body').innerHTML = `
+    <div style="margin-bottom:12px"><span class="badge bd-ok" style="font-size:11px;padding:3px 12px">${f.overall_fair_score}/100 — ${f.fair_grade}</span></div>
+    ${Object.entries(f.dimension_scores || {}).map(([k,v]) => `
+      <div class="bar-row">
+        <div class="bar-lbl">${k}</div>
+        <div class="bar-track"><div class="bar-fill" style="width:${v}%;background:var(${colorMap[k]||'--accent'})"></div></div>
+        <div class="bar-val">${v.toFixed(0)}</div>
+      </div>`).join('')}
+    ${(f.sensitive_features_detected||[]).length > 0
+      ? `<div class="muted" style="margin-top:8px">⚠ Sensitive features: ${f.sensitive_features_detected.join(', ')}</div>` : ''}`;
+}
+
+function renderAnomaly(a) {
+  const el = document.getElementById('anomaly-body');
+  if (!a || a.status === 'skipped' || a.status === 'error') {
+    el.innerHTML = `<p class="muted">Skipped — ${a?.reason || 'insufficient data'}</p>`; return;
+  }
+  const sc = { LOW:'var(--green)', MODERATE:'var(--orange)', HIGH:'var(--red)' };
+  el.innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:12px">
+      ${[['Anomalous Rows', a.anomaly_count, sc[a.severity]],['% of Dataset', a.anomaly_percent.toFixed(1)+'%', null],['Severity', a.severity, sc[a.severity]]]
+        .map(([l,v,c]) => `<div style="text-align:center;background:var(--bg3);border-radius:var(--r);padding:10px">
+          <div class="stat-v" style="font-size:16px${c?';color:'+c:''}">${v}</div>
+          <div class="stat-l">${l}</div></div>`).join('')}
+    </div>
+    <p class="muted">${a.interpretation || ''}</p>
+    ${Object.keys(a.top_contributing_features||{}).length > 0
+      ? `<div class="muted" style="margin-top:6px">Top: ${Object.entries(a.top_contributing_features).slice(0,3).map(([k,v]) => `<span class="mono">${k}(${v.toFixed(2)})</span>`).join(', ')}</div>` : ''}`;
+}
+
+function renderVariables(fa, fi) {
+  document.getElementById('vars-body').innerHTML = Object.entries(fa).map(([col, info]) => {
+    const isNum = info.mean !== undefined;
+    const mp = info.missing_percent || 0;
+    const mc = mp > 60 ? 'var(--red)' : mp > 20 ? 'var(--orange)' : mp > 5 ? 'var(--yellow)' : 'var(--green)';
+    const outliers = info.outlier_count ?? '-';
+    return `<tr>
+      <td class="mono">${col}${info.is_target ? ' <span class="badge bd-ok">target</span>' : ''}</td>
+      <td class="muted">${isNum ? '🔢' : '🔤'}</td>
+      <td><span style="color:${mc};font-weight:${mp>5?700:400}">${mp.toFixed(1)}%</span></td>
+      <td class="mono">${info.unique_values}</td>
+      <td class="mono">${isNum ? (info.mean?.toFixed(3)||'-') : (info.top_category||'-')}</td>
+      <td class="mono">${isNum ? (info.std?.toFixed(3)||'-') : (info.category_entropy?.toFixed(2)||'-')}</td>
+      <td class="mono" style="color:${Math.abs(info.skewness||0)>2?'var(--orange)':'var(--text3)'}">${isNum ? (info.skewness?.toFixed(2)||'-') : '-'}</td>
+      <td class="mono">${isNum ? outliers : '-'}</td>
+      <td class="muted" style="font-size:10px">${(isNum ? (info.scaling_suggestion||'') : (info.encoding_suggestion||'')).slice(0,45)}</td>
+    </tr>`;
+  }).join('');
+
+  const ranking = fi?.ranking_by_rf_importance || [];
+  const fd = fi?.feature_details || {};
+  const tierColor = { HIGH:'var(--green)', MODERATE:'var(--orange)', LOW:'var(--yellow)', NEGLIGIBLE:'var(--text3)' };
+  document.getElementById('fi-body').innerHTML = ranking.map(f => {
+    const d = fd[f.feature] || {};
+    return `<tr>
+      <td class="mono">${f.feature}</td>
+      <td class="mono">${f.rf_importance?.toFixed(4)}</td>
+      <td class="mono">${d.permutation_importance?.toFixed(4) ?? '-'}</td>
+      <td><span style="color:${tierColor[f.tier]};font-weight:700;font-size:11px">${f.tier}</span></td>
+      <td>${d.methods_agree ? '<span style="color:var(--green)">✓</span>' : '<span style="color:var(--orange)">⚠</span>'}</td>
+      <td class="muted">${(d.reason||'').slice(0,60)}</td>
+    </tr>`;
+  }).join('');
+}
+
+function renderIssues(er) {
+  const iss = er.issue_summary || {};
+  document.getElementById('issue-badges').innerHTML = `
+    <span class="badge bd-CRITICAL" style="margin-left:6px">${iss.CRITICAL||0} C</span>
+    <span class="badge bd-HIGH" style="margin-left:4px">${iss.HIGH||0} H</span>
+    <span class="badge bd-MODERATE" style="margin-left:4px">${iss.MODERATE||0} M</span>`;
+
+  document.getElementById('issues-body').innerHTML = (er.issues||[]).map(i => `
+    <div class="issue-card ${i.severity}">
+      <div class="issue-head"><span class="badge bd-${i.severity}">${i.severity}</span><span class="muted">${i.category} · ${i.source_module}</span></div>
+      <div class="issue-title">${i.title}</div>
+      <div class="issue-explain">${i.explanation}</div>
+      <span class="issue-fix">${i.fix.slice(0,130)}${i.fix.length>130?'...':''}</span>
+    </div>`).join('') || '<p class="ok-text">✓ No critical issues found.</p>';
+
+  document.getElementById('action-body').innerHTML = (er.action_plan||[]).map(a =>
+    `<tr><td class="mono" style="font-weight:700">${a.step}</td><td><span class="badge bd-${a.priority}">${a.priority}</span></td><td style="font-size:11px">${a.reason}</td><td class="muted mono">${a.module}</td></tr>`
+  ).join('');
+}
+
+function renderLeakage(l) {
+  const total = l?.summary?.total_issues || 0;
+  if (!total) { document.getElementById('leakage-body').innerHTML = '<p class="ok-text">✓ No data leakage detected.</p>'; return; }
+  document.getElementById('leakage-body').innerHTML = (l.target_leakage||[]).map(i =>
+    `<div class="issue-card CRITICAL"><strong class="mono">${i.feature}</strong> — correlation: <span class="mono">${typeof i.correlation === 'number' ? i.correlation.toFixed(3) : i.correlation}</span><br><span class="muted">${i.reason}</span></div>`
+  ).join('');
+}
+
+function renderCorrelation(c) {
+  const pairs = c?.strong_correlation_pairs || [];
+  if (!pairs.length) { document.getElementById('corr-body').innerHTML = '<p class="ok-text">✓ No strong correlations found.</p>'; return; }
+  document.getElementById('corr-body').innerHTML = `
+    <table class="tbl"><thead><tr><th>Feature 1</th><th>Feature 2</th><th>Pearson</th><th>Severity</th></tr></thead>
+    <tbody>${pairs.map(p => `<tr><td class="mono">${p.feature_1}</td><td class="mono">${p.feature_2}</td><td class="mono">${p.pearson?.toFixed(3)}</td><td><span class="badge bd-${p.severity}">${p.severity}</span></td></tr>`).join('')}</tbody></table>`;
+}
+
+function renderOverfitting(ov) {
+  const overall = ov?.overall_overfitting || {};
+  const rc = { LOW:'var(--green)', MODERATE:'var(--orange)', HIGH:'var(--red)' };
+  let html = `<p style="font-weight:700;color:${rc[overall.risk]||'var(--text2)'};margin-bottom:12px">${overall.risk} — ${overall.message}</p>`;
+  Object.entries(ov?.per_model_analysis || {}).forEach(([name, r]) => {
+    if (r.error) return;
+    html += `<div class="ov-row ${r.overfitting_risk}">
+      <div class="ov-name">${name}</div>
+      <span class="badge bd-${r.overfitting_risk==='LOW'?'LOW':r.overfitting_risk==='MODERATE'?'MODERATE':'CRITICAL'}">${r.overfitting_risk}</span>
+      <div class="ov-stats">Train <span style="color:var(--text)">${r.train_score?.toFixed(3)}</span> · Test <span style="color:var(--text)">${r.test_score?.toFixed(3)}</span> · Gap <span style="color:var(--text)">${r.train_test_gap?.toFixed(3)}</span></div>
+    </div>`;
+  });
+  document.getElementById('overfit-body').innerHTML = html;
+}
+
+function renderModels(at, cv, rec) {
+  const task = at?.task_type || '';
+  const best = at?.best_model || '';
+  const isClf = task === 'classification';
+  const mKey = isClf ? 'f1_weighted' : 'r2_score';
+  const mLabel = isClf ? 'F1 (weighted)' : 'R²';
+
+  document.getElementById('models-head').textContent = `Model Comparison · ${task} · Metric: ${mLabel}`;
+
+  document.getElementById('models-body').innerHTML = Object.entries(at?.model_comparison||{}).map(([name, r]) => {
+    const score = r[mKey] ?? r.cv_mean ?? 0;
+    const isB = name === best;
+    return `<div class="model-row">
+      <div class="model-name">${name} ${isB ? '<span class="best-tag">BEST</span>' : ''}</div>
+      <div class="model-bar"><div class="model-fill ${isB?'best':''}" style="width:${Math.max(0,score)*100}%"></div></div>
+      <div class="model-score" style="color:${isB?'var(--green)':'var(--text)'}">${score.toFixed(3)}</div>
+      <div class="model-cv-info">CV ±${r.cv_std?.toFixed(3)||'—'} · ${r.training_time_seconds||'?'}s</div>
+    </div>`;
+  }).join('');
+
+  const perModel = cv?.per_model_stability || {};
+  document.getElementById('cv-body').innerHTML = `
+    <p class="muted" style="margin-bottom:10px">${cv?.cv_strategy} · ${cv?.cv_folds} folds</p>
+    <table class="tbl"><thead><tr><th>Model</th><th>Mean</th><th>Std</th><th>CV%</th><th>Stability</th></tr></thead>
+    <tbody>${Object.entries(perModel).map(([name, r]) =>
+      `<tr><td class="mono">${name}</td><td class="mono">${r.mean_score?.toFixed(3)}</td><td class="mono">${r.std_dev?.toFixed(3)}</td><td class="mono">${r.coefficient_of_variation_pct?.toFixed(1)}%</td><td><span class="badge ${r.stability==='STABLE'?'bd-LOW':r.stability==='MODERATE'?'bd-MODERATE':'bd-CRITICAL'}">${r.stability}</span></td></tr>`
+    ).join('')}</tbody></table>
+    <p style="margin-top:8px;font-size:11px;color:var(--green)">${cv?.dataset_stability_summary?.message||''}</p>`;
+
+  const ci = rec?.class_imbalance || {};
+  document.getElementById('rec-body').innerHTML = `
+    <div class="info-row"><div class="info-key">Task</div><div class="info-val">${rec?.task_type||''}</div></div>
+    <div class="info-row"><div class="info-key">Primary Metric</div><div class="info-val">${rec?.evaluation_metrics?.primary||''}</div></div>
+    <div class="info-row"><div class="info-key">Class Imbalance</div><div class="info-val"><span class="badge bd-${ci.severity==='NONE'?'LOW':'MODERATE'}">${ci.severity||'N/A'} (${ci.ratio?.toFixed(1)}x)</span></div></div>
+    <div class="info-row"><div class="info-key">Best Model</div><div class="info-val mono">${rec?.best_from_training||'—'}</div></div>
+    <div style="margin-top:10px;font-size:11px;font-weight:700;color:var(--text2)">Recommended:</div>
+    ${(rec?.recommended_models||[]).map(m =>
+      `<div style="padding:6px 0;border-bottom:1px solid var(--border)"><strong>${m.model}</strong> <span class="muted">[${m.priority}]</span><br><span class="muted" style="font-size:11px">${(m.why||'').slice(0,100)}</span></div>`
+    ).join('')}`;
+}
+
+function renderPipeline(p) {
+  if (!p) return;
+  document.getElementById('pipeline-target').textContent = 'target: ' + (p.target_column || '—');
+  const rows = [];
+  (p.drop_columns||[]).forEach(d => rows.push(['DROP', d.column, d.reason]));
+  Object.entries(p.missing_value_strategy||{}).forEach(([c,v]) => rows.push(['IMPUTE', c, `${v.strategy} (${v.missing_percent?.toFixed(1)}% missing)`]));
+  Object.entries(p.encoding_strategy||{}).forEach(([c,v]) => rows.push(['ENCODE', c, `${v.encoding} — ${v.reason}`]));
+  Object.entries(p.transformation_recommendations||{}).forEach(([c,v]) => rows.push(['TRANSFORM', c, `${v.transform} (skew=${typeof v.skewness === 'number' ? v.skewness.toFixed(2) : v.skewness})`]));
+  Object.entries(p.scaling_strategy||{}).forEach(([c,v]) => rows.push(['SCALE', c, v.scaler]));
+
+  document.getElementById('pipeline-body').innerHTML = rows.map(([tag,col,reason]) =>
+    `<tr><td><span class="ptag p-${tag}">${tag}</span></td><td class="mono">${col}</td><td class="muted">${reason}</td></tr>`
+  ).join('');
+
+  const s = p.summary || {};
+  document.getElementById('pipeline-stats').innerHTML = [
+    ['Total', s.total_features], ['Dropped', s.dropped], ['Numeric', s.numeric_features],
+    ['Categorical', s.categorical_features], ['Impute', s.columns_needing_imputation],
+    ['Encode', s.columns_needing_encoding], ['Scale', s.columns_needing_scaling],
+  ].map(([l,v]) => `<div class="stat-cell"><div class="stat-v" style="font-size:16px">${v??0}</div><div class="stat-l">${l}</div></div>`).join('');
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// CHARTS
+// ══════════════════════════════════════════════════════════════════════
+function renderCharts(d) {
+  Object.values(charts).forEach(c => { try { c.destroy(); } catch{} }); charts = {};
+
+  const chartDefaults = {
+    responsive: true, maintainAspectRatio: false,
+    plugins: { legend: { display: false }, tooltip: { bodyFont: { family: "'JetBrains Mono'" } } }
+  };
+  const gridColor = 'rgba(52,59,86,.6)';
+  const tickColor = '#5e6680';
+
+  // Radar
+  const dims = d.dataset_quality_score.dimension_scores;
+  charts.radar = new Chart(document.getElementById('radar-chart'), {
+    type: 'radar',
+    data: {
+      labels: Object.keys(dims).map(k => k.replace('_',' ')),
+      datasets: [{ label: 'Score', data: Object.values(dims),
+        backgroundColor: 'rgba(79,127,255,.15)', borderColor: '#4f7fff',
+        pointBackgroundColor: '#4f7fff', pointRadius: 3 }]
+    },
+    options: { ...chartDefaults,
+      scales: { r: { min:0, max:100, grid: { color:gridColor }, ticks: { color:tickColor, font:{size:9}, backdropColor:'transparent' }, pointLabels: { color:tickColor, font:{size:10} } } },
+      plugins: { legend:{display:false} }
+    }
+  });
+
+  // Model performance
+  const mc = d.auto_training_results?.model_comparison || {};
+  const task = d.auto_training_results?.task_type;
+  const mKey = task==='classification' ? 'f1_weighted' : 'r2_score';
+  const best = d.auto_training_results?.best_model;
+  const mNames = Object.keys(mc);
+  const mScores = mNames.map(n => mc[n][mKey] ?? mc[n].cv_mean ?? 0);
+  charts.model = new Chart(document.getElementById('model-chart'), {
+    type: 'bar',
+    data: { labels: mNames, datasets: [{ data: mScores, backgroundColor: mNames.map(n => n===best ? '#2ecc71' : '#4f7fff'), borderRadius: 4 }] },
+    options: { ...chartDefaults, scales: { y:{ min:0, max:1, grid:{color:gridColor}, ticks:{color:tickColor,font:{size:10}} }, x:{grid:{display:false},ticks:{color:tickColor,font:{size:9}}} } }
+  });
+
+  // Feature importance
+  const fi = d.feature_importance?.ranking_by_rf_importance || [];
+  charts.fi = new Chart(document.getElementById('fi-chart'), {
+    type: 'bar',
+    data: { labels: fi.map(f=>f.feature), datasets: [{ data: fi.map(f=>f.rf_importance), backgroundColor: '#4f7fff', borderRadius: 3 }] },
+    options: { ...chartDefaults, indexAxis:'y', scales: { x:{grid:{color:gridColor},ticks:{color:tickColor,font:{size:10}}}, y:{grid:{display:false},ticks:{color:tickColor,font:{size:9}}} } }
+  });
+
+  // Missing values
+  const fa = d.feature_analysis || {};
+  const missCols = Object.entries(fa).filter(([,v]) => (v.missing_percent||0) > 0);
+  if (missCols.length > 0) {
+    charts.missing = new Chart(document.getElementById('missing-chart'), {
+      type: 'bar',
+      data: { labels: missCols.map(([k])=>k), datasets: [{ data: missCols.map(([,v])=>v.missing_percent),
+        backgroundColor: missCols.map(([,v]) => v.missing_percent>60?'#e74c3c':v.missing_percent>20?'#f39c12':'#f1c40f'), borderRadius:3 }] },
+      options: { ...chartDefaults, scales: { y:{min:0,max:100,grid:{color:gridColor},ticks:{color:tickColor,font:{size:10}}}, x:{grid:{display:false},ticks:{color:tickColor,font:{size:9}}} } }
     });
-    const data = await res.json();
-    hideProgress();
-    if (!res.ok) { showStatus('Failed to load report', 'err'); return; }
-    renderResults(data.result);
-  } catch(e) {
-    hideProgress();
-    showStatus('Error loading report', 'err');
+  } else {
+    document.getElementById('missing-chart').parentElement.innerHTML = '<p class="ok-text" style="padding:20px 0">✓ No missing values in this dataset.</p>';
   }
 }
 
-async function deleteReport(id) {
-  if (!confirm('Delete this report?')) return;
+// ══════════════════════════════════════════════════════════════════════
+// ADVANCED TOOLS
+// ══════════════════════════════════════════════════════════════════════
+async function callTool(endpoint, btn, msg) {
+  if (!selectedFile) { alert('No file loaded.'); return null; }
+  const origText = btn.getAttribute('data-orig') || btn.textContent;
+  btn.disabled = true; btn.textContent = msg;
+  const fd = new FormData(); fd.append('file', selectedFile);
   try {
-    const res = await fetch(API + '/reports/' + id, {
-      method: 'DELETE',
-      headers: { 'Authorization': 'Bearer ' + token }
-    });
-    if (res.ok) loadHistory();
-  } catch(e) {}
+    const res = await fetch(API + endpoint, { method:'POST', body:fd });
+    const data = await res.json();
+    btn.disabled = false; btn.textContent = origText;
+    return data;
+  } catch(e) {
+    btn.disabled = false; btn.textContent = origText;
+    return null;
+  }
 }
 
+async function runWhatIf(btn) {
+  const data = await callTool('/whatif', btn, 'Running...');
+  if (!data) return;
+  const r = document.getElementById('whatif-result'); r.style.display = 'block';
+  if (data.error) { r.innerHTML = `<p class="muted">Error: ${data.error}</p>`; return; }
+  const imp = data.total_improvement > 0;
+  r.innerHTML = `
+    <div style="display:flex;gap:16px;text-align:center;margin-bottom:8px">
+      <div style="flex:1"><div class="mono" style="font-size:18px;color:var(--text2)">${data.baseline_score?.toFixed(3)}</div><div class="muted">Baseline</div></div>
+      <div style="display:flex;align-items:center;color:var(--text3)">→</div>
+      <div style="flex:1"><div class="mono" style="font-size:18px;color:var(--green)">${data.final_score?.toFixed(3)}</div><div class="muted">After fixes</div></div>
+      <div style="flex:1"><div class="mono" style="font-size:18px;color:${imp?'var(--green)':'var(--red)'}">${imp?'+':''}${data.total_improvement?.toFixed(3)}</div><div class="muted">Δ Change</div></div>
+    </div>
+    <p class="muted">${data.verdict}</p>`;
+
+  document.getElementById('whatif-tbody').innerHTML = (data.steps||[]).map(s =>
+    `<tr><td class="mono">${s.step}</td><td style="font-size:11px">${s.fix_applied||''}</td>
+    <td class="mono">${s.score?.toFixed(4)}</td>
+    <td class="mono" style="color:${s.delta>0.001?'var(--green)':s.delta<-0.001?'var(--red)':'var(--text3)'}">${s.delta>=0?'+':''}${s.delta?.toFixed(4)||'-'}</td>
+    <td><span class="badge ${s.impact==='POSITIVE'?'bd-LOW':s.impact==='NEGATIVE'?'bd-CRITICAL':'bd-MODERATE'}">${s.impact||'-'}</span></td></tr>`
+  ).join('');
+  document.getElementById('whatif-detail').style.display = 'block';
+}
+
+async function runAutoML(btn) {
+  const data = await callTool('/automl', btn, 'Running AutoML...');
+  if (!data) return;
+  const r = document.getElementById('automl-result'); r.style.display = 'block';
+  if (data.error) { r.innerHTML = `<p class="muted">Error: ${data.error}</p>`; return; }
+  const best = data.best_configuration || {};
+  r.innerHTML = `
+    <div style="font-weight:700;margin-bottom:4px">Best: <span class="mono">${best.model}</span></div>
+    <div class="mono" style="font-size:20px;color:var(--green)">${best.score?.toFixed(4)}</div>
+    <div class="muted" style="margin-top:4px">${best.preprocessing} · ${data.total_configurations_tested} configs tested · ${data.total_time_seconds}s</div>
+    ${best.is_ensemble ? '<div style="margin-top:6px"><span class="badge bd-ok">Ensemble won</span></div>' : ''}`;
+
+  document.getElementById('automl-tbody').innerHTML = (data.top_10_configurations||[]).map((c,i) =>
+    `<tr style="${i===0?'background:rgba(46,204,113,.05)':''}">
+    <td class="mono">${i+1}</td><td>${c.model}</td>
+    <td class="mono" style="color:var(--green)">${c.score?.toFixed(4)}</td>
+    <td class="mono">±${c.std?.toFixed(4)}</td>
+    <td class="mono">${c.impute_strategy}</td>
+    <td>${c.log_transform ? '✓' : '-'}</td>
+    <td class="mono">${c.scaler}</td>
+    <td>${c.is_ensemble ? '<span class="badge bd-ok">Yes</span>' : '-'}</td></tr>`
+  ).join('');
+  document.getElementById('automl-detail').style.display = 'block';
+}
+
+async function runSHAP(btn) {
+  const data = await callTool('/shap', btn, 'Running SHAP...');
+  if (!data) return;
+  const r = document.getElementById('shap-result'); r.style.display = 'block';
+  if (data.status === 'error') { r.innerHTML = `<p class="muted">Error: ${data.error}</p>`; return; }
+  const top = data.global_feature_importance || {};
+  const maxVal = Math.max(...Object.values(top));
+  r.innerHTML = `<div class="muted">${data.n_samples_analyzed} samples · <span class="mono">${data.model_used}</span></div>`;
+  document.getElementById('shap-bars').innerHTML = `
+    <p class="muted" style="margin-bottom:12px">${data.shap_summary}</p>
+    ${Object.entries(top).slice(0,12).map(([feat,val]) =>
+      `<div class="bar-row">
+        <div class="bar-lbl mono" style="font-size:10px">${feat.slice(0,18)}</div>
+        <div class="bar-track"><div class="bar-fill" style="width:${maxVal>0?(val/maxVal*100):0}%;background:var(--accent)"></div></div>
+        <div class="bar-val mono">${val.toFixed(4)}</div>
+      </div>`).join('')}
+    <p class="muted" style="margin-top:10px;font-size:10px">${data.research_note||''}</p>`;
+  document.getElementById('shap-detail').style.display = 'block';
+}
+
+async function downloadNLReport(btn) {
+  if (!selectedFile) { alert('No file.'); return; }
+  const origText = btn.getAttribute('data-orig');
+  btn.disabled = true; btn.textContent = 'Generating...';
+  const r = document.getElementById('nl-result'); r.style.display = 'block';
+  r.innerHTML = '<span class="muted">Generating report...</span>';
+  const fd = new FormData(); fd.append('file', selectedFile);
+  try {
+    const res = await fetch(API+'/nlreport?format=text', { method:'POST', body:fd });
+    const text = await res.text();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([text], {type:'text/plain'}));
+    a.download = (selectedFile.name.replace(/\.[^.]+$/,'')) + '_ml_report.txt';
+    a.click();
+    r.innerHTML = '<span style="color:var(--green)">✓ Downloaded</span>';
+    btn.textContent = 'Download Again';
+  } catch(e) {
+    r.innerHTML = '<span style="color:var(--red)">Error generating report.</span>';
+    btn.textContent = origText;
+  }
+  btn.disabled = false;
+}
+
+async function executePipeline() {
+  if (!selectedFile) { alert('No file.'); return; }
+  const btn = document.getElementById('exec-btn');
+  const st = document.getElementById('exec-status');
+  btn.disabled = true; btn.textContent = 'Processing...';
+  st.innerHTML = '<span class="muted">Applying pipeline...</span>';
+  const fd = new FormData(); fd.append('file', selectedFile);
+  try {
+    const res = await fetch(API+'/execute', { method:'POST', body:fd });
+    if (res.ok) {
+      const blob = await res.blob();
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = (selectedFile.name.replace(/\.[^.]+$/,'')) + '_cleaned.csv';
+      a.click();
+      const shape = res.headers.get('X-Final-Shape') || '—';
+      const steps = res.headers.get('X-Steps-Applied') || '—';
+      st.innerHTML = `<span style="color:var(--green)">✓ Downloaded · Shape: ${shape} · Steps: ${steps}</span>`;
+      btn.textContent = 'Download Again';
+    } else {
+      const data = await res.json();
+      st.innerHTML = `<span style="color:var(--red)">Error: ${data.error||data.detail}</span>`;
+      btn.textContent = 'Retry';
+    }
+  } catch(e) {
+    st.innerHTML = '<span style="color:var(--red)">Connection error.</span>';
+    btn.textContent = 'Retry';
+  }
+  btn.disabled = false;
+}
+
+async function downloadPDF() {
+  if (!selectedFile) return;
+  const btn = document.querySelector('[onclick="downloadPDF()"]');
+  btn.disabled = true; btn.textContent = '⏳ Generating...';
+  const fd = new FormData(); fd.append('file', selectedFile);
+  try {
+    const res = await fetch(API+'/report', { method:'POST', body:fd });
+    if (res.ok) {
+      const blob = await res.blob();
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = (selectedFile.name.replace(/\.[^.]+$/,'')) + '_report.pdf';
+      a.click();
+      btn.textContent = '✓ Downloaded';
+      setTimeout(() => { btn.disabled=false; btn.textContent='↓ PDF'; }, 3000);
+    } else {
+      // Fallback: download NL report as text if PDF not implemented
+      await downloadNLReport(btn);
+      btn.disabled = false; btn.textContent = '↓ PDF';
+    }
+  } catch(e) {
+    btn.disabled = false; btn.textContent = '↓ PDF';
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// RESET
+// ══════════════════════════════════════════════════════════════════════
+function resetAll() {
+  document.getElementById('report').style.display = 'none';
+  document.getElementById('upload-screen').style.display = 'block';
+  document.getElementById('file-pill').classList.remove('show');
+  document.getElementById('analyze-btn').disabled = true;
+  document.getElementById('target-col').value = '';
+  selectedFile = null; lastData = null;
+  activeSample = null;
+  fileInput.value = '';
+  document.querySelectorAll('.sc').forEach(c => c.classList.remove('active'));
+  document.getElementById('sample-status').style.display = 'none';
+
+  // Reset tabs
+  document.querySelectorAll('.tab').forEach((t,i) => t.classList.toggle('active', i===0));
+  document.querySelectorAll('.pane').forEach((p,i) => p.classList.toggle('active', i===0));
+
+  // Reset tool results
+  ['whatif-result','automl-result','shap-result','nl-result'].forEach(id => {
+    const el = document.getElementById(id); if(el){ el.style.display='none'; el.innerHTML=''; }
+  });
+  ['whatif-detail','automl-detail','shap-detail'].forEach(id => {
+    const el = document.getElementById(id); if(el) el.style.display='none';
+  });
+
+  // Destroy charts
+  Object.values(charts).forEach(c => { try{c.destroy();}catch{} }); charts = {};
+}
 </script>
 </body>
 </html>

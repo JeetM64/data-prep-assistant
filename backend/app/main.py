@@ -1,92 +1,22 @@
 """
-main.py — ML Data Readiness Analyzer v5.0.0
-Production-ready: Auth, Reports History, PDF, Charts data, all edge cases handled.
+ML Data Readiness Analyzer — main.py
+Full EDA automation + ML readiness scoring backend.
 """
 
-from fastapi import FastAPI, UploadFile, File, Query, Depends
+from fastapi import FastAPI, File, UploadFile, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse, PlainTextResponse
-from typing import List, Optional
-from datetime import datetime
-from bson import ObjectId
-
+from fastapi.responses import StreamingResponse
+from typing import Optional
 import pandas as pd
 import numpy as np
 import io
-import logging
-import traceback
+import json
+import re
+import time
+import warnings
+warnings.filterwarnings("ignore")
 
-# ── ML Modules ───────────────────────────────────────────────────────────────
-from app.ml.feature_analysis import analyze_features
-from app.ml.correlation_analysis import correlation_analysis
-from app.ml.preprocessing_suggestions import preprocessing_suggestions
-from app.ml.leakage_detection import detect_data_leakage
-from app.ml.model_recommendation import recommend_model
-from app.ml.auto_training import auto_train
-from app.ml.cross_validation_engine import cross_validation_stability
-from app.ml.overfitting_detection import detect_overfitting
-from app.ml.feature_importance_engine import feature_importance_analysis
-from app.ml.cluster_intelligence import cluster_intelligence
-from app.ml.data_quality_score import dataset_quality_score
-from app.ml.feature_selection_engine import smart_feature_selection
-from app.ml.pipeline_builder import build_preprocessing_pipeline
-from app.ml.target_detection import detect_target_column
-from app.ml.explainability_engine import generate_explainability_report
-from app.ml.fair_assessment import fair_assessment
-from app.ml.anomaly_detection import detect_anomalies
-from app.ml.pipeline_executor import execute_pipeline
-from app.ml.benchmark_engine import run_benchmark
-from app.ml.generate_pdf_report import generate_pdf_report
-from app.ml.dataset_comparison import compare_datasets
-from app.ml.whatif_simulator import run_whatif_simulation
-from app.ml.nl_report_generator import generate_nl_report
-from app.ml.automl_optimizer import run_automl_optimization
-from app.ml.shap_explainability import run_shap_analysis
-
-from app.sample_datasets import router as sample_router
-
-# ── DB & Auth ─────────────────────────────────────────────────────────────────
-from app.db import reports_collection, users_collection
-from app.auth import (
-    RegisterRequest, LoginRequest, TokenResponse,
-    register_user, login_user,
-    get_current_user, get_optional_user
-)
-from app.utils import prepare_ml_dataset
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-
-# ── JSON Cleaner ──────────────────────────────────────────────────────────────
-def clean_for_json(obj):
-    if isinstance(obj, dict):
-        return {k: clean_for_json(v) for k, v in obj.items()}
-    elif isinstance(obj, list):
-        return [clean_for_json(i) for i in obj]
-    elif isinstance(obj, np.integer):
-        return int(obj)
-    elif isinstance(obj, np.floating):
-        return None if (np.isnan(obj) or np.isinf(obj)) else float(obj)
-    elif isinstance(obj, np.bool_):
-        return bool(obj)
-    elif isinstance(obj, np.ndarray):
-        return obj.tolist()
-    elif isinstance(obj, float):
-        return None if (np.isnan(obj) or np.isinf(obj)) else obj
-    elif isinstance(obj, ObjectId):
-        return str(obj)
-    elif isinstance(obj, datetime):
-        return obj.isoformat()
-    return obj
-
-
-# ── App Init ──────────────────────────────────────────────────────────────────
-app = FastAPI(
-    title="ML Data Readiness Analyzer",
-    description="Production ML pipeline: Auth, Analysis, AutoML, SHAP, Reports.",
-    version="5.0.0"
-)
+app = FastAPI(title="ML Data Readiness Analyzer", version="4.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -97,604 +27,1516 @@ app.add_middleware(
 )
 
 
-# ── Internal Helpers ──────────────────────────────────────────────────────────
-def _load_df(file_obj, filename: str) -> Optional[pd.DataFrame]:
-    fname = filename.lower()
+# ══════════════════════════════════════════════════════════════════════════════
+# UTILITY HELPERS
+# ══════════════════════════════════════════════════════════════════════════════
+
+def safe_float(val):
     try:
-        if fname.endswith(".csv"):
-            return pd.read_csv(file_obj)
-        elif fname.endswith((".xlsx", ".xls")):
-            return pd.read_excel(file_obj)
-    except Exception as e:
-        logger.error(f"Failed to load file {filename}: {e}")
-    return None
+        v = float(val)
+        return round(v, 4) if not (np.isnan(v) or np.isinf(v)) else 0.0
+    except:
+        return 0.0
+
+def safe_int(val):
+    try:
+        v = int(val)
+        return v if not np.isnan(float(v)) else 0
+    except:
+        return 0
 
 
-app.include_router(sample_router)
+# ══════════════════════════════════════════════════════════════════════════════
+# 1. DATASET SUMMARY
+# ══════════════════════════════════════════════════════════════════════════════
 
-def _detect_task(df: pd.DataFrame, target: str) -> str:
-    y = df[target].dropna()
-    return "classification" if (y.nunique() <= 15 or y.dtype == object) else "regression"
+def get_dataset_summary(df: pd.DataFrame) -> dict:
+    total_cells = len(df) * len(df.columns)
+    missing_total = int(df.isnull().sum().sum())
+    numeric_cols = df.select_dtypes(include=["int64","float64","int32","float32"]).columns.tolist()
+    cat_cols = df.select_dtypes(include=["object","category","bool"]).columns.tolist()
+    mem_mb = safe_float(df.memory_usage(deep=True).sum() / (1024*1024))
+
+    return {
+        "rows": len(df),
+        "columns": len(df.columns),
+        "missing_values": missing_total,
+        "missing_value_percent": safe_float((missing_total / total_cells * 100) if total_cells > 0 else 0),
+        "duplicate_rows": safe_int(df.duplicated().sum()),
+        "numeric_columns": numeric_cols,
+        "categorical_columns": cat_cols,
+        "column_dtypes": {col: str(dtype) for col, dtype in df.dtypes.items()},
+        "memory_usage_mb": mem_mb,
+        "column_names": df.columns.tolist(),
+    }
 
 
-def _validate_df(df, filename: str):
-    """Returns (df, error_response). error_response is None if valid."""
-    if df is None:
-        return None, JSONResponse({"error": f"Unsupported file format: {filename}. Use CSV or Excel."}, status_code=400)
-    if df.empty:
-        return None, JSONResponse({"error": "Dataset is empty."}, status_code=400)
-    if df.shape[1] < 2:
-        return None, JSONResponse({"error": "Need at least 2 columns."}, status_code=400)
-    return df, None
+# ══════════════════════════════════════════════════════════════════════════════
+# 2. TARGET DETECTION
+# ══════════════════════════════════════════════════════════════════════════════
 
+TARGET_KEYWORDS = [
+    "target","label","class","y","output","result","survived","species",
+    "quality","outcome","price","churn","fraud","default","diagnosis",
+    "category","response","dependent","predict","score","status","grade",
+    "decision","flag","risk","type","group"
+]
 
-def _run_full_analysis(df: pd.DataFrame, target_override: Optional[str], filename: str):
-    """
-    Core analysis pipeline. Returns (result_dict, target_column).
-    All target column edge cases handled here.
-    """
-    rows, cols = df.shape
-    td = detect_target_column(df)
-
-    # ── Target Resolution (fixed edge cases) ─────────────────────────────────
-    if target_override:
-        # User specified a target
-        if target_override in df.columns:
-            target = target_override
-            target_source = "user_specified"
+def detect_target_column(df: pd.DataFrame, user_specified: Optional[str] = None) -> dict:
+    if user_specified and user_specified in df.columns:
+        col = user_specified
+        n_unique = df[col].nunique()
+        if df[col].dtype in ["object","category","bool"] or n_unique <= 20:
+            task_type = "classification_binary" if n_unique == 2 else "classification_multiclass" if n_unique <= 20 else "regression"
         else:
-            # Fuzzy match: case-insensitive
-            col_map = {c.lower(): c for c in df.columns}
-            fuzzy = col_map.get(target_override.lower())
-            if fuzzy:
-                target = fuzzy
-                target_source = "user_specified_fuzzy_match"
-            else:
-                return {
-                    "error": f"Column '{target_override}' not found.",
-                    "available_columns": df.columns.tolist()
-                }, None
-    else:
-        target = td["predicted_target"]
-        target_source = "auto_detected"
-
-    logger.info(f"Target resolved: '{target}' ({target_source})")
-
-    # ── Dataset Summary ───────────────────────────────────────────────────────
-    summary = {
-        "rows": int(rows), "columns": int(cols),
-        "missing_values": int(df.isnull().sum().sum()),
-        "missing_value_percent": round(float(df.isnull().mean().mean() * 100), 2),
-        "duplicate_rows": int(df.duplicated().sum()),
-        "numeric_columns": df.select_dtypes(include="number").columns.tolist(),
-        "categorical_columns": df.select_dtypes(exclude="number").columns.tolist(),
-        "column_dtypes": df.dtypes.astype(str).to_dict(),
-        "memory_usage_mb": round(float(df.memory_usage(deep=True).sum() / 1e6), 3)
-    }
-
-    # ── Prepare clean ML dataframe (target must survive) ─────────────────────
-    qs = dataset_quality_score(df)
-    pipeline = build_preprocessing_pipeline(df, target_column=target)
-    drop_cols = [
-        e["column"] for e in pipeline.get("drop_columns", [])
-        if e["column"] != target  # NEVER drop target
-    ]
-    clean_df = prepare_ml_dataset(df.drop(columns=drop_cols, errors="ignore"))
-
-    # If target got dropped during prepare_ml_dataset, restore from original
-    if target not in clean_df.columns:
-        logger.warning(f"Target '{target}' lost during cleaning — restoring from original.")
-        clean_df[target] = df[target].values
-
-    # Final check
-    if target not in clean_df.columns:
-        logger.error(f"Target '{target}' could not be restored. Using full original df.")
-        clean_df = prepare_ml_dataset(df.copy())
-        if target not in clean_df.columns:
-            clean_df[target] = df[target].values
-
-    # ── Run All Modules ───────────────────────────────────────────────────────
-    resp = {
-        "dataset_summary":          summary,
-        "target_detection":         {**td, "final_target": target, "target_source": target_source},
-        "feature_analysis":         analyze_features(df),
-        "correlation_analysis":     correlation_analysis(df),
-        "preprocessing_advice":     preprocessing_suggestions(df),
-        "data_leakage_analysis":    detect_data_leakage(df),
-        "model_recommendation":     recommend_model(df, target_column=target),
-        "dataset_quality_score":    qs,
-        "recommended_pipeline":     pipeline,
-        "fair_assessment":          fair_assessment(df, filename=filename),
-        "anomaly_detection":        detect_anomalies(df),
-        "auto_training_results":    auto_train(clean_df, target_column=target),
-        "cross_validation":         cross_validation_stability(clean_df, target_column=target),
-        "overfitting_analysis":     detect_overfitting(clean_df, target_column=target),
-        "feature_importance":       feature_importance_analysis(clean_df, target_column=target),
-        "cluster_intelligence":     cluster_intelligence(clean_df),
-        "smart_feature_selection":  smart_feature_selection(clean_df, target_column=target),
-    }
-    resp["explainability_report"] = generate_explainability_report(resp)
-    return resp, target
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# AUTH ENDPOINTS
-# ═══════════════════════════════════════════════════════════════════════════════
-
-@app.post("/auth/register", response_model=TokenResponse, tags=["Auth"])
-def register(req: RegisterRequest):
-    """Register a new user. Returns JWT token."""
-    return register_user(req)
-
-
-@app.post("/auth/login", response_model=TokenResponse, tags=["Auth"])
-def login(req: LoginRequest):
-    """Login. Returns JWT token."""
-    return login_user(req)
-
-
-@app.get("/auth/me", tags=["Auth"])
-def me(user: dict = Depends(get_current_user)):
-    """Get current user info from token."""
-    return {"user": user}
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# REPORTS ENDPOINTS
-# ═══════════════════════════════════════════════════════════════════════════════
-
-@app.get("/reports", tags=["Reports"])
-def get_reports(
-    page: int = Query(default=1, ge=1),
-    limit: int = Query(default=20, ge=1, le=100),
-    user: Optional[dict] = Depends(get_optional_user)
-):
-    """
-    Get paginated list of analysis reports.
-    - If authenticated: returns only your reports.
-    - If not authenticated: returns all public reports (no result payload, just metadata).
-    """
-    try:
-        skip = (page - 1) * limit
-        query = {}
-        if user:
-            query["user_id"] = user["_id"]
-
-        # Metadata only — no full result payload (too large)
-        projection = {
-            "_id": 1,
-            "filename": 1,
-            "created_at": 1,
-            "user_id": 1,
-            "summary": 1,
+            task_type = "regression"
+        return {
+            "final_target": col,
+            "task_type": task_type,
+            "confidence": 1.0,
+            "target_source": "user_specified",
+            "warning": None,
+            "top_candidates": [{"column": col, "score": 1.0}],
         }
 
-        cursor = reports_collection.find(query, projection) \
-            .sort("created_at", -1) \
-            .skip(skip) \
-            .limit(limit)
+    candidates = []
+    for col in df.columns:
+        score = 0.0
+        col_lower = col.lower().strip()
+        n_unique = df[col].nunique()
+        n_rows = len(df)
 
-        reports = []
-        for r in cursor:
-            reports.append({
-                "id":          str(r["_id"]),
-                "filename":    r.get("filename", "unknown"),
-                "created_at":  r["created_at"].isoformat() if isinstance(r.get("created_at"), datetime) else str(r.get("created_at", "")),
-                "summary":     r.get("summary", {}),
+        # Name matching
+        for kw in TARGET_KEYWORDS:
+            if col_lower == kw:
+                score += 0.6
+            elif kw in col_lower:
+                score += 0.3
+
+        # Last column heuristic
+        if col == df.columns[-1]:
+            score += 0.2
+
+        # Binary column bonus
+        if n_unique == 2:
+            score += 0.25
+
+        # Small unique count
+        if 2 <= n_unique <= 20:
+            score += 0.15
+
+        # High unique numeric → likely target for regression
+        if df[col].dtype in ["float64","int64"] and n_unique > 20:
+            score += 0.05
+
+        # Penalize ID-like columns
+        if n_unique == n_rows:
+            score -= 0.5
+        if re.search(r"^id$|_id$|^index$|^row", col_lower):
+            score -= 0.4
+
+        candidates.append({"column": col, "score": round(score, 3)})
+
+    candidates.sort(key=lambda x: -x["score"])
+    best = candidates[0] if candidates else None
+
+    if not best or best["score"] <= 0:
+        last_col = df.columns[-1]
+        best = {"column": last_col, "score": 0.3}
+
+    col = best["column"]
+    n_unique = df[col].nunique()
+    if df[col].dtype in ["object","category","bool"] or n_unique <= 20:
+        task_type = "classification_binary" if n_unique == 2 else "classification_multiclass" if n_unique <= 20 else "regression"
+    else:
+        task_type = "regression"
+
+    return {
+        "final_target": col,
+        "task_type": task_type,
+        "confidence": best["score"],
+        "target_source": "auto_detected",
+        "warning": "Low confidence — please verify target column." if best["score"] < 0.4 else None,
+        "top_candidates": candidates[:5],
+    }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 3. FEATURE ANALYSIS (deep per-column EDA)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def analyze_features(df: pd.DataFrame, target: Optional[str] = None) -> dict:
+    result = {}
+    n = len(df)
+
+    for col in df.columns:
+        s = df[col]
+        missing = int(s.isnull().sum())
+        missing_pct = safe_float(missing / n * 100)
+        n_unique = int(s.nunique())
+        unique_ratio = safe_float(n_unique / n)
+
+        is_num = pd.api.types.is_numeric_dtype(s)
+        is_cat = not is_num
+
+        info = {
+            "dtype": str(s.dtype),
+            "missing_count": missing,
+            "missing_percent": missing_pct,
+            "unique_values": n_unique,
+            "unique_ratio": unique_ratio,
+            "is_target": col == target,
+        }
+
+        if is_num:
+            clean = s.dropna()
+            info.update({
+                "mean": safe_float(clean.mean()),
+                "median": safe_float(clean.median()),
+                "std": safe_float(clean.std()),
+                "min": safe_float(clean.min()),
+                "max": safe_float(clean.max()),
+                "q25": safe_float(clean.quantile(0.25)),
+                "q75": safe_float(clean.quantile(0.75)),
+                "skewness": safe_float(clean.skew()),
+                "kurtosis": safe_float(clean.kurtosis()),
+                "zero_count": int((clean == 0).sum()),
+                "negative_count": int((clean < 0).sum()),
+                "outlier_count": _count_outliers(clean),
+                "scaling_suggestion": _suggest_scaling(clean),
+            })
+        else:
+            counts = s.value_counts()
+            top_cat = str(counts.index[0]) if len(counts) > 0 else "N/A"
+            top_freq = safe_float(counts.iloc[0] / n * 100) if len(counts) > 0 else 0
+            # Entropy
+            probs = counts / counts.sum()
+            entropy = safe_float(-np.sum(probs * np.log2(probs + 1e-10)))
+            info.update({
+                "top_category": top_cat,
+                "top_category_freq": top_freq,
+                "category_entropy": entropy,
+                "value_counts": counts.head(10).to_dict(),
+                "encoding_suggestion": _suggest_encoding(s),
             })
 
-        total = reports_collection.count_documents(query)
+        result[col] = info
+
+    return result
+
+
+def _count_outliers(s: pd.Series) -> int:
+    if len(s) < 4:
+        return 0
+    q1, q3 = s.quantile(0.25), s.quantile(0.75)
+    iqr = q3 - q1
+    return int(((s < q1 - 1.5*iqr) | (s > q3 + 1.5*iqr)).sum())
+
+
+def _suggest_scaling(s: pd.Series) -> str:
+    skew = abs(s.skew()) if len(s) > 3 else 0
+    has_neg = (s < 0).any()
+    if skew > 2:
+        return "log_transform + StandardScaler" if not has_neg else "Yeo-Johnson + StandardScaler"
+    if abs(skew) > 1:
+        return "RobustScaler (moderate skew)"
+    return "StandardScaler"
+
+
+def _suggest_encoding(s: pd.Series) -> str:
+    n_unique = s.nunique()
+    if n_unique == 2:
+        return "LabelEncoding (binary)"
+    if n_unique <= 10:
+        return f"OneHotEncoding ({n_unique} cats)"
+    if n_unique <= 50:
+        return "OrdinalEncoding or TargetEncoding"
+    return "TargetEncoding or Drop (high cardinality)"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 4. DATA QUALITY SCORE
+# ══════════════════════════════════════════════════════════════════════════════
+
+def calculate_quality_score(df: pd.DataFrame, target: Optional[str] = None) -> dict:
+    n = len(df)
+    total_cells = n * len(df.columns)
+
+    # Completeness
+    missing_pct = df.isnull().sum().sum() / total_cells * 100 if total_cells > 0 else 0
+    completeness = max(0.0, 100 - missing_pct * 2.5)
+
+    # Uniqueness
+    dup_pct = df.duplicated().sum() / n * 100 if n > 0 else 0
+    uniqueness = max(0.0, 100 - dup_pct * 2)
+
+    # Consistency (mixed types detection)
+    consistency_issues = 0
+    for col in df.select_dtypes(include="object").columns:
+        sample = df[col].dropna().head(100)
+        numeric_like = sample.apply(lambda x: str(x).replace('.','',1).replace('-','',1).isdigit()).mean()
+        if 0.3 < numeric_like < 0.8:
+            consistency_issues += 1
+    consistency = max(0.0, 100 - consistency_issues * 10)
+
+    # Class balance
+    class_balance = 100.0
+    if target and target in df.columns:
+        vc = df[target].value_counts(normalize=True)
+        if len(vc) >= 2:
+            imbalance_ratio = vc.iloc[0] / vc.iloc[-1] if vc.iloc[-1] > 0 else 999
+            class_balance = max(0.0, 100 - np.log10(max(imbalance_ratio, 1)) * 30)
+
+    # Feature quality (outlier density)
+    num_cols = df.select_dtypes(include=["float64","int64"]).columns.tolist()
+    if target and target in num_cols:
+        num_cols = [c for c in num_cols if c != target]
+    outlier_scores = []
+    for col in num_cols[:15]:
+        s = df[col].dropna()
+        if len(s) > 3:
+            outlier_pct = _count_outliers(s) / len(s) * 100
+            outlier_scores.append(outlier_pct)
+    avg_outlier = np.mean(outlier_scores) if outlier_scores else 0
+    feature_quality = max(0.0, 100 - avg_outlier * 3)
+
+    # Adequacy (rows per feature)
+    rpf = n / len(df.columns) if len(df.columns) > 0 else 0
+    adequacy = min(100.0, rpf * 5)
+
+    dims = {
+        "completeness": round(completeness, 1),
+        "uniqueness": round(uniqueness, 1),
+        "consistency": round(consistency, 1),
+        "class_balance": round(class_balance, 1),
+        "feature_quality": round(feature_quality, 1),
+        "adequacy": round(adequacy, 1),
+    }
+    overall = round(sum(dims.values()) / len(dims), 1)
+    status = "Excellent" if overall >= 90 else "Good" if overall >= 75 else "Fair" if overall >= 60 else "Poor"
+
+    return {"overall_score": overall, "dimension_scores": dims, "status": status}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 5. CORRELATION ANALYSIS
+# ══════════════════════════════════════════════════════════════════════════════
+
+def analyze_correlations(df: pd.DataFrame, target: Optional[str] = None) -> dict:
+    num_df = df.select_dtypes(include=["int64","float64","int32","float32"])
+    if len(num_df.columns) < 2:
+        return {"strong_correlation_pairs": [], "target_correlations": {}, "total_pairs_flagged": 0}
+
+    corr = num_df.corr()
+    pairs = []
+
+    for i, c1 in enumerate(corr.columns):
+        for j, c2 in enumerate(corr.columns):
+            if i >= j:
+                continue
+            val = safe_float(corr.loc[c1, c2])
+            if abs(val) > 0.75:
+                sev = "CRITICAL" if abs(val) > 0.95 else "HIGH" if abs(val) > 0.85 else "MODERATE"
+                pairs.append({
+                    "feature_1": c1, "feature_2": c2,
+                    "pearson": val, "severity": sev
+                })
+
+    # Target correlations
+    target_corr = {}
+    if target and target in num_df.columns:
+        tc = num_df.corr()[target].drop(target, errors="ignore")
+        target_corr = {k: safe_float(v) for k, v in tc.sort_values(key=abs, ascending=False).items()}
+
+    pairs.sort(key=lambda x: -abs(x["pearson"]))
+    return {
+        "strong_correlation_pairs": pairs,
+        "target_correlations": target_corr,
+        "total_pairs_flagged": len(pairs),
+        "summary": f"{len(pairs)} highly correlated pair(s) found (>0.75)."
+    }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 6. DATA LEAKAGE ANALYSIS
+# ══════════════════════════════════════════════════════════════════════════════
+
+def analyze_leakage(df: pd.DataFrame, target: Optional[str] = None) -> dict:
+    if not target or target not in df.columns:
+        return {"target_leakage": [], "summary": {"total_issues": 0}}
+
+    leakage = []
+    t = df[target]
+
+    for col in df.columns:
+        if col == target:
+            continue
+        s = df[col]
+        try:
+            if pd.api.types.is_numeric_dtype(s) and pd.api.types.is_numeric_dtype(t):
+                corr = abs(safe_float(s.corr(t)))
+                if corr > 0.95:
+                    leakage.append({
+                        "feature": col, "correlation": corr,
+                        "reason": f"Near-perfect correlation ({corr:.3f}) with target — likely leakage."
+                    })
+            # Perfect predictor via unique mapping
+            if s.nunique() == t.nunique():
+                mapping_size = df.groupby(col)[target].nunique()
+                if mapping_size.max() == 1:
+                    leakage.append({
+                        "feature": col, "correlation": 1.0,
+                        "reason": "One-to-one mapping with target — data leakage."
+                    })
+        except:
+            pass
+
+    return {"target_leakage": leakage, "summary": {"total_issues": len(leakage)}}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 7. ANOMALY DETECTION (IsolationForest)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def detect_anomalies(df: pd.DataFrame, target: Optional[str] = None) -> dict:
+    try:
+        from sklearn.ensemble import IsolationForest
+        from sklearn.impute import SimpleImputer
+
+        num_df = df.select_dtypes(include=["float64","int64"])
+        if target and target in num_df.columns:
+            num_df = num_df.drop(columns=[target])
+
+        if len(num_df.columns) < 2 or len(df) < 20:
+            return {"status": "skipped", "reason": "insufficient numeric data", "anomaly_count": 0, "anomaly_percent": 0}
+
+        imp = SimpleImputer(strategy="median")
+        X = imp.fit_transform(num_df.iloc[:, :20])
+
+        clf = IsolationForest(contamination=0.05, random_state=42, n_jobs=-1)
+        preds = clf.fit_predict(X)
+        anomaly_mask = preds == -1
+        count = int(anomaly_mask.sum())
+        pct = safe_float(count / len(df) * 100)
+
+        sev = "LOW" if pct < 3 else "MODERATE" if pct < 8 else "HIGH"
+
+        # Top contributing features
+        scores = np.abs(X[anomaly_mask] - X.mean(axis=0)).mean(axis=0)
+        top_feat = {}
+        for i in np.argsort(scores)[-3:][::-1]:
+            top_feat[num_df.columns[i]] = safe_float(scores[i])
 
         return {
-            "reports": reports,
-            "pagination": {
-                "page":        page,
-                "limit":       limit,
-                "total":       total,
-                "total_pages": max(1, -(-total // limit))  # ceiling division
-            }
+            "status": "completed",
+            "anomaly_count": count,
+            "anomaly_percent": pct,
+            "severity": sev,
+            "top_contributing_features": top_feat,
+            "interpretation": f"{count} rows ({pct:.1f}%) flagged as anomalous using IsolationForest.",
         }
     except Exception as e:
-        logger.error(f"GET /reports error: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return {"status": "error", "reason": str(e), "anomaly_count": 0, "anomaly_percent": 0}
 
 
-@app.get("/reports/{report_id}", tags=["Reports"])
-def get_report_by_id(
-    report_id: str,
-    user: Optional[dict] = Depends(get_optional_user)
-):
-    """Get full report by ID."""
-    try:
-        oid = ObjectId(report_id)
-    except Exception:
-        return JSONResponse({"error": "Invalid report ID format."}, status_code=400)
+# ══════════════════════════════════════════════════════════════════════════════
+# 8. FAIR ASSESSMENT
+# ══════════════════════════════════════════════════════════════════════════════
 
-    query = {"_id": oid}
-    if user:
-        query["user_id"] = user["_id"]
+SENSITIVE_KEYWORDS = ["age","gender","sex","race","ethnicity","religion","nationality",
+                      "disability","income","education","zipcode","postcode","marital"]
 
-    report = reports_collection.find_one(query, {"_id": 0})
-    if not report:
-        return JSONResponse({"error": "Report not found."}, status_code=404)
+def assess_fair(df: pd.DataFrame, target: Optional[str] = None) -> dict:
+    cols_lower = [c.lower() for c in df.columns]
 
-    return JSONResponse(content=clean_for_json(report))
+    # Findable: has column names, no unnamed columns
+    unnamed = sum(1 for c in df.columns if str(c).startswith("Unnamed"))
+    findable = max(0, 100 - unnamed * 20)
 
+    # Accessible: no excessive missing
+    missing_pct = df.isnull().sum().sum() / (len(df)*len(df.columns)) * 100
+    accessible = max(0, 100 - missing_pct * 2)
 
-@app.delete("/reports/{report_id}", tags=["Reports"])
-def delete_report(
-    report_id: str,
-    user: dict = Depends(get_current_user)
-):
-    """Delete a report (must be owner)."""
-    try:
-        oid = ObjectId(report_id)
-    except Exception:
-        return JSONResponse({"error": "Invalid report ID."}, status_code=400)
+    # Interoperable: standard dtypes, no all-object columns with numbers
+    interoperable = 100
+    for col in df.select_dtypes(include="object").columns:
+        try:
+            pd.to_numeric(df[col], errors="raise")
+            interoperable -= 10
+        except:
+            pass
+    interoperable = max(0, interoperable)
 
-    result = reports_collection.delete_one({"_id": oid, "user_id": user["_id"]})
-    if result.deleted_count == 0:
-        return JSONResponse({"error": "Report not found or not authorized."}, status_code=404)
-    return {"message": "Report deleted."}
+    # Reusable: sensitive feature detection
+    sensitive_found = [c for c in cols_lower if any(kw in c for kw in SENSITIVE_KEYWORDS)]
+    reusable = max(0, 100 - len(sensitive_found) * 15)
 
+    issues = {}
+    if sensitive_found:
+        issues["sensitive_features"] = sensitive_found
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# CORE ML ENDPOINTS
-# ═══════════════════════════════════════════════════════════════════════════════
+    dims = {
+        "findable": round(findable, 1),
+        "accessible": round(accessible, 1),
+        "interoperable": round(interoperable, 1),
+        "reusable": round(reusable, 1),
+    }
+    overall = round(sum(dims.values()) / 4, 1)
+    grade = "Fully FAIR" if overall >= 90 else "Mostly FAIR" if overall >= 75 else "Partially FAIR" if overall >= 55 else "Not FAIR"
 
-@app.get("/", tags=["Meta"])
-def home():
     return {
-        "name": "ML Data Readiness Analyzer",
-        "version": "5.0.0",
-        "endpoints": {
-            "POST /auth/register": "Register user",
-            "POST /auth/login":    "Login user",
-            "GET  /auth/me":       "Get current user",
-            "POST /upload":        "Full 18-module analysis",
-            "GET  /reports":       "List your reports",
-            "GET  /reports/{id}":  "Get full report",
-            "POST /execute":       "Download cleaned CSV",
-            "POST /benchmark":     "Compare datasets",
-            "POST /report":        "Download PDF report",
-            "POST /compare":       "Drift detection",
-            "POST /whatif":        "What-if simulator",
-            "POST /nlreport":      "Natural language report",
-            "POST /automl":        "AutoML optimizer",
-            "POST /shap":          "SHAP explainability",
-            "GET  /health":        "Health check",
+        "overall_fair_score": overall,
+        "fair_grade": grade,
+        "dimension_scores": dims,
+        "issues_found": issues,
+        "sensitive_features_detected": sensitive_found,
+        "summary": f"Dataset is {grade}. {len(sensitive_found)} sensitive feature(s) detected."
+    }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 9. AUTO TRAINING + MODEL COMPARISON
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _prepare_for_ml(df: pd.DataFrame, target: str):
+    from sklearn.impute import SimpleImputer
+    from sklearn.preprocessing import LabelEncoder
+
+    df2 = df.copy()
+
+    # Drop high-missing (>60%)
+    n = len(df2)
+    drop_cols = [c for c in df2.columns if df2[c].isnull().mean() > 0.6 and c != target]
+    df2.drop(columns=drop_cols, inplace=True, errors="ignore")
+
+    # Encode categoricals
+    for col in df2.select_dtypes(include=["object","category","bool"]).columns:
+        if col == target:
+            continue
+        le = LabelEncoder()
+        df2[col] = le.fit_transform(df2[col].astype(str))
+
+    # Encode target if needed
+    if df2[target].dtype == object or str(df2[target].dtype) == "category":
+        le = LabelEncoder()
+        df2[target] = le.fit_transform(df2[target].astype(str))
+
+    X = df2.drop(columns=[target])
+    y = df2[target]
+
+    # Impute
+    imp = SimpleImputer(strategy="median")
+    X_imp = pd.DataFrame(imp.fit_transform(X), columns=X.columns)
+
+    return X_imp, y
+
+
+def run_auto_training(df: pd.DataFrame, target: Optional[str], task_type: str) -> dict:
+    from sklearn.model_selection import cross_val_score, StratifiedKFold, KFold
+    from sklearn.linear_model import LogisticRegression, Ridge
+    from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor, GradientBoostingClassifier, GradientBoostingRegressor
+    from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
+    from sklearn.neighbors import KNeighborsClassifier, KNeighborsRegressor
+    from sklearn.preprocessing import StandardScaler
+    from sklearn.pipeline import Pipeline
+
+    if not target or target not in df.columns:
+        return {"error": "No valid target column"}
+
+    try:
+        X, y = _prepare_for_ml(df, target)
+    except Exception as e:
+        return {"error": f"Data prep failed: {e}"}
+
+    if len(X) < 10:
+        return {"error": "Too few rows for training"}
+
+    is_clf = "classification" in task_type
+    n_samples = len(X)
+    n_splits = min(5, max(2, n_samples // 20))
+
+    if is_clf:
+        from sklearn.metrics import f1_score
+        cv = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
+        models = {
+            "Logistic Regression": Pipeline([("sc", StandardScaler()), ("m", LogisticRegression(max_iter=1000, random_state=42))]),
+            "Decision Tree":       DecisionTreeClassifier(max_depth=6, random_state=42),
+            "Random Forest":       RandomForestClassifier(n_estimators=80, max_depth=8, random_state=42, n_jobs=-1),
+            "Gradient Boosting":   GradientBoostingClassifier(n_estimators=80, max_depth=4, random_state=42),
+            "KNN":                 KNeighborsClassifier(n_neighbors=5),
+        }
+        metric = "f1_weighted"
+    else:
+        cv = KFold(n_splits=n_splits, shuffle=True, random_state=42)
+        models = {
+            "Ridge Regression":  Pipeline([("sc", StandardScaler()), ("m", Ridge(alpha=1.0))]),
+            "Decision Tree":     DecisionTreeRegressor(max_depth=6, random_state=42),
+            "Random Forest":     RandomForestRegressor(n_estimators=80, max_depth=8, random_state=42, n_jobs=-1),
+            "Gradient Boosting": GradientBoostingRegressor(n_estimators=80, max_depth=4, random_state=42),
+            "KNN":               KNeighborsRegressor(n_neighbors=5),
+        }
+        metric = "r2"
+
+    results = {}
+    best_name = None
+    best_score = -999
+
+    for name, model in models.items():
+        t0 = time.time()
+        try:
+            scores = cross_val_score(model, X, y, cv=cv, scoring=metric, n_jobs=-1)
+            mean_s = safe_float(scores.mean())
+            std_s = safe_float(scores.std())
+            elapsed = round(time.time() - t0, 2)
+
+            row = {
+                "cv_mean": mean_s,
+                "cv_std": std_s,
+                "training_time_seconds": elapsed,
+            }
+            if is_clf:
+                row["f1_weighted"] = mean_s
+                row["cv_mean_f1"] = mean_s
+            else:
+                row["r2_score"] = mean_s
+                row["cv_mean_r2"] = mean_s
+
+            results[name] = row
+
+            if mean_s > best_score:
+                best_score = mean_s
+                best_name = name
+        except Exception as e:
+            results[name] = {"error": str(e), "cv_mean": 0.0}
+
+    return {
+        "task_type": "classification" if is_clf else "regression",
+        "best_model": best_name,
+        "best_score": best_score,
+        "model_comparison": results,
+        "metric_used": metric,
+    }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 10. CROSS-VALIDATION STABILITY
+# ══════════════════════════════════════════════════════════════════════════════
+
+def analyze_cv_stability(training_results: dict) -> dict:
+    mc = training_results.get("model_comparison", {})
+    per_model = {}
+
+    for name, r in mc.items():
+        if "error" in r:
+            continue
+        mean_s = r.get("cv_mean", 0)
+        std_s = r.get("cv_std", 0)
+        cv_pct = safe_float(std_s / mean_s * 100) if mean_s > 0 else 0
+        stability = "STABLE" if cv_pct < 5 else "MODERATE" if cv_pct < 15 else "UNSTABLE"
+        per_model[name] = {
+            "mean_score": mean_s,
+            "std_dev": std_s,
+            "coefficient_of_variation_pct": cv_pct,
+            "stability": stability,
+        }
+
+    overall_stab = "STABLE"
+    if any(v["stability"] == "UNSTABLE" for v in per_model.values()):
+        overall_stab = "UNSTABLE"
+    elif any(v["stability"] == "MODERATE" for v in per_model.values()):
+        overall_stab = "MODERATE"
+
+    return {
+        "cv_strategy": "StratifiedKFold / KFold",
+        "cv_folds": 5,
+        "per_model_stability": per_model,
+        "dataset_stability_summary": {
+            "overall": overall_stab,
+            "message": f"Overall CV stability: {overall_stab}."
         }
     }
 
 
-@app.get("/health", tags=["Meta"])
-def health():
+# ══════════════════════════════════════════════════════════════════════════════
+# 11. FEATURE IMPORTANCE
+# ══════════════════════════════════════════════════════════════════════════════
+
+def compute_feature_importance(df: pd.DataFrame, target: Optional[str], task_type: str) -> dict:
+    from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
+    from sklearn.inspection import permutation_importance as perm_imp
+    from sklearn.model_selection import train_test_split
+
+    if not target or target not in df.columns:
+        return {"ranking_by_rf_importance": [], "feature_details": {}}
+
     try:
-        reports_collection.find_one({}, {"_id": 1})
-        db_status = "connected"
-    except Exception as e:
-        db_status = f"error: {str(e)}"
-    return {"status": "ok", "version": "5.0.0", "database": db_status}
+        X, y = _prepare_for_ml(df, target)
+        if len(X) < 10 or len(X.columns) == 0:
+            return {"ranking_by_rf_importance": [], "feature_details": {}}
 
+        is_clf = "classification" in task_type
+        model = (RandomForestClassifier(n_estimators=60, max_depth=8, random_state=42, n_jobs=-1)
+                 if is_clf else
+                 RandomForestRegressor(n_estimators=60, max_depth=8, random_state=42, n_jobs=-1))
 
-# ── ENDPOINT 1: FULL ANALYSIS ─────────────────────────────────────────────────
-@app.post("/upload", tags=["Analysis"])
-async def upload_dataset(
-    file: UploadFile = File(...),
-    target_column: str = Query(default=None),
-    user: Optional[dict] = Depends(get_optional_user)
-):
-    """Full 18-module analysis. Saves report to DB. Returns complete JSON."""
-    try:
-        df = _load_df(file.file, file.filename)
-        df, err = _validate_df(df, file.filename)
-        if err: return err
+        X_tr, X_te, y_tr, y_te = train_test_split(X, y, test_size=0.2, random_state=42)
+        model.fit(X_tr, y_tr)
 
-        result, target = _run_full_analysis(df, target_column, file.filename)
+        rf_imp = model.feature_importances_
 
-        if isinstance(result, dict) and "error" in result:
-            return JSONResponse(result, status_code=400)
+        # Permutation importance (quick)
+        pi = perm_imp(model, X_te, y_te, n_repeats=5, random_state=42, n_jobs=-1)
+        perm_imps = pi.importances_mean
 
-        # ── Build summary snapshot for report list ───────────────────────────
-        qs = result.get("dataset_quality_score", {})
-        er = result.get("explainability_report", {})
-        at = result.get("auto_training_results", {})
-        ds = result.get("dataset_summary", {})
+        ranking = []
+        details = {}
+        feat_names = X.columns.tolist()
 
-        summary = {
-            "rows":              ds.get("rows"),
-            "columns":           ds.get("columns"),
-            "target":            target,
-            "quality_score":     qs.get("overall_score"),
-            "quality_status":    qs.get("status"),
-            "readiness_score":   er.get("readiness_score"),
-            "readiness_grade":   er.get("grade"),
-            "best_model":        at.get("best_model"),
-            "best_score":        at.get("best_score"),
-            "metric":            at.get("primary_metric"),
-            "task_type":         at.get("task_type"),
-        }
+        for i, feat in enumerate(feat_names):
+            rf_val = safe_float(rf_imp[i])
+            perm_val = safe_float(perm_imps[i])
+            agree = (rf_val > 0.01) == (perm_val > 0)
+            tier = "HIGH" if rf_val > 0.1 else "MODERATE" if rf_val > 0.03 else "LOW" if rf_val > 0.005 else "NEGLIGIBLE"
+            ranking.append({"feature": feat, "rf_importance": rf_val, "tier": tier})
+            details[feat] = {
+                "permutation_importance": perm_val,
+                "methods_agree": agree,
+                "reason": f"RF importance {rf_val:.3f}, permutation {perm_val:.3f}."
+            }
 
-        # ── Save to MongoDB ──────────────────────────────────────────────────
-        doc = {
-            "filename":   file.filename,
-            "result":     clean_for_json(result),
-            "summary":    summary,
-            "created_at": datetime.utcnow(),
-        }
-        if user:
-            doc["user_id"] = user["_id"]
-
-        try:
-            inserted = reports_collection.insert_one(doc)
-            result["_report_id"] = str(inserted.inserted_id)
-            # Update user's report count
-            if user:
-                users_collection.update_one(
-                    {"_id": ObjectId(user["_id"])},
-                    {"$inc": {"reports_count": 1}}
-                )
-        except Exception as db_err:
-            logger.warning(f"MongoDB save failed (non-fatal): {db_err}")
-
-        return JSONResponse(content=clean_for_json(result))
+        ranking.sort(key=lambda x: -x["rf_importance"])
+        return {"ranking_by_rf_importance": ranking, "feature_details": details}
 
     except Exception as e:
-        logger.error(f"POST /upload error: {traceback.format_exc()}")
-        return JSONResponse({"error": str(e), "traceback": traceback.format_exc()[-1000:]}, status_code=500)
+        return {"ranking_by_rf_importance": [], "feature_details": {}, "error": str(e)}
 
 
-# ── ENDPOINT 2: EXECUTE PIPELINE ─────────────────────────────────────────────
-@app.post("/execute", tags=["Analysis"])
-async def execute_dataset_pipeline(
-    file: UploadFile = File(...),
-    target_column: str = Query(default=None),
-    download: bool = Query(default=True)
-):
-    """Apply full preprocessing pipeline. Download cleaned ML-ready CSV."""
+# ══════════════════════════════════════════════════════════════════════════════
+# 12. OVERFITTING ANALYSIS
+# ══════════════════════════════════════════════════════════════════════════════
+
+def analyze_overfitting(df: pd.DataFrame, target: Optional[str], task_type: str) -> dict:
+    from sklearn.model_selection import train_test_split
+    from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor, GradientBoostingClassifier, GradientBoostingRegressor
+    from sklearn.linear_model import LogisticRegression, Ridge
+    from sklearn.metrics import f1_score, r2_score
+    from sklearn.pipeline import Pipeline
+    from sklearn.preprocessing import StandardScaler
+
+    if not target or target not in df.columns:
+        return {"overall_overfitting": {"risk": "UNKNOWN", "message": "No target"}, "per_model_analysis": {}}
+
     try:
-        df = _load_df(file.file, file.filename)
-        df, err = _validate_df(df, file.filename)
-        if err: return err
+        X, y = _prepare_for_ml(df, target)
+        if len(X) < 20:
+            return {"overall_overfitting": {"risk": "LOW", "message": "Too few rows"}, "per_model_analysis": {}}
 
-        td = detect_target_column(df)
-        target = target_column if (target_column and target_column in df.columns) else td["predicted_target"]
-        pipeline = build_preprocessing_pipeline(df, target_column=target)
-        result = execute_pipeline(df, pipeline)
+        X_tr, X_te, y_tr, y_te = train_test_split(X, y, test_size=0.25, random_state=42)
+        is_clf = "classification" in task_type
 
-        if not result["success"]:
-            return JSONResponse({"error": "Pipeline execution failed.", "details": result}, status_code=500)
+        if is_clf:
+            models = {
+                "Logistic Regression": Pipeline([("sc", StandardScaler()), ("m", LogisticRegression(max_iter=1000))]),
+                "Random Forest":       RandomForestClassifier(n_estimators=60, random_state=42, n_jobs=-1),
+                "Gradient Boosting":   GradientBoostingClassifier(n_estimators=60, random_state=42),
+            }
+        else:
+            models = {
+                "Ridge":             Pipeline([("sc", StandardScaler()), ("m", Ridge())]),
+                "Random Forest":     RandomForestRegressor(n_estimators=60, random_state=42, n_jobs=-1),
+                "Gradient Boosting": GradientBoostingRegressor(n_estimators=60, random_state=42),
+            }
 
-        cleaned_df = result["cleaned_dataframe"]
-        stats = result["stats"]
+        per_model = {}
+        risks = []
 
-        if download:
-            out = io.StringIO()
-            cleaned_df.to_csv(out, index=False)
-            out.seek(0)
-            base = file.filename.rsplit(".", 1)[0]
-            return StreamingResponse(
-                io.BytesIO(out.getvalue().encode()),
-                media_type="text/csv",
-                headers={
-                    "Content-Disposition": f"attachment; filename={base}_cleaned.csv",
-                    "X-Original-Shape": f"{stats['original_shape']['rows']}x{stats['original_shape']['columns']}",
-                    "X-Final-Shape":    f"{stats['final_shape']['rows']}x{stats['final_shape']['columns']}",
-                    "X-Steps-Applied":  str(stats["steps_applied"])
+        for name, model in models.items():
+            try:
+                model.fit(X_tr, y_tr)
+                if is_clf:
+                    tr_score = safe_float(f1_score(y_tr, model.predict(X_tr), average="weighted"))
+                    te_score = safe_float(f1_score(y_te, model.predict(X_te), average="weighted"))
+                else:
+                    tr_score = safe_float(r2_score(y_tr, model.predict(X_tr)))
+                    te_score = safe_float(r2_score(y_te, model.predict(X_te)))
+
+                gap = tr_score - te_score
+                risk = "LOW" if gap < 0.05 else "MODERATE" if gap < 0.15 else "HIGH"
+                risks.append(risk)
+                per_model[name] = {
+                    "train_score": tr_score, "test_score": te_score,
+                    "train_test_gap": safe_float(gap),
+                    "overfitting_risk": risk,
                 }
-            )
+            except Exception as e:
+                per_model[name] = {"error": str(e)}
 
-        return JSONResponse(content=clean_for_json({
-            "success": True, "target": target, "stats": stats,
-            "execution_log": result["execution_log"],
-            "preview": cleaned_df.head(5).to_dict(orient="records"),
-            "columns": cleaned_df.columns.tolist()
-        }))
+        overall_risk = "HIGH" if "HIGH" in risks else "MODERATE" if "MODERATE" in risks else "LOW"
+        msg = {
+            "HIGH": "Significant overfitting detected — regularize or get more data.",
+            "MODERATE": "Mild overfitting — monitor with more data.",
+            "LOW": "Models generalize well — minimal overfitting."
+        }[overall_risk]
+
+        return {
+            "overall_overfitting": {"risk": overall_risk, "message": msg},
+            "per_model_analysis": per_model,
+        }
     except Exception as e:
-        logger.error(f"POST /execute error: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return {"overall_overfitting": {"risk": "ERROR", "message": str(e)}, "per_model_analysis": {}}
 
 
-# ── ENDPOINT 3: BENCHMARK ─────────────────────────────────────────────────────
-@app.post("/benchmark", tags=["Analysis"])
-async def benchmark_datasets(files: List[UploadFile] = File(...)):
-    """Compare 2-20 datasets. Returns ranked research table."""
-    if len(files) < 2:  return JSONResponse({"error": "Upload at least 2 files."}, status_code=400)
-    if len(files) > 20: return JSONResponse({"error": "Max 20 datasets."}, status_code=400)
+# ══════════════════════════════════════════════════════════════════════════════
+# 13. RECOMMENDED PIPELINE
+# ══════════════════════════════════════════════════════════════════════════════
 
-    datasets = []
-    for f in files:
+ID_PATTERNS = [r"^id$", r".*_id$", r"^id_", r".*uuid.*", r".*index$", r"^row"]
+META_PATTERNS = [r".*timestamp.*", r".*created.*", r".*updated.*"]
+TEXT_PATTERNS = [r".*name$", r".*address.*", r".*email.*", r".*description.*", r".*comment.*"]
+
+def _matches(col, patterns):
+    cl = col.lower()
+    return any(re.search(p, cl) for p in patterns)
+
+def build_pipeline(df: pd.DataFrame, target: Optional[str], fa: dict) -> dict:
+    n = len(df)
+    drop_cols = []
+    impute = {}
+    encode = {}
+    scale = {}
+    transform = {}
+
+    for col, info in fa.items():
+        if col == target:
+            continue
+
+        # Drop conditions
+        if _matches(col, ID_PATTERNS) and info["unique_ratio"] > 0.9:
+            drop_cols.append({"column": col, "reason": "ID column (high uniqueness + name pattern)"})
+            continue
+        if _matches(col, META_PATTERNS):
+            drop_cols.append({"column": col, "reason": "Datetime/metadata column"})
+            continue
+        if _matches(col, TEXT_PATTERNS) and info.get("dtype") == "object" and info["unique_ratio"] > 0.5:
+            drop_cols.append({"column": col, "reason": "Free-text column (no ML signal)"})
+            continue
+        if info["missing_percent"] > 60:
+            drop_cols.append({"column": col, "reason": f"{info['missing_percent']:.0f}% missing"})
+            continue
+        if info["unique_values"] <= 1:
+            drop_cols.append({"column": col, "reason": "Zero variance (constant)"})
+            continue
+
+        # Imputation
+        if info["missing_percent"] > 0:
+            if info.get("mean") is not None:
+                strat = "median" if abs(info.get("skewness", 0)) > 1 else "mean"
+            else:
+                strat = "mode"
+            impute[col] = {
+                "strategy": strat,
+                "missing_percent": info["missing_percent"]
+            }
+
+        # Encoding
+        if info.get("dtype") in ["object","category"] or (info.get("unique_values", 999) <= 20 and info.get("mean") is None):
+            if info.get("dtype") in ["object","category"]:
+                n_u = info["unique_values"]
+                if n_u == 2:
+                    encode[col] = {"encoding": "LabelEncoding", "reason": "Binary categorical"}
+                elif n_u <= 10:
+                    encode[col] = {"encoding": "OneHotEncoding", "reason": f"{n_u} categories"}
+                elif n_u <= 50:
+                    encode[col] = {"encoding": "OrdinalEncoding", "reason": f"High cardinality ({n_u})"}
+                else:
+                    drop_cols.append({"column": col, "reason": f"Very high cardinality ({n_u}) — no safe encoding"})
+                    continue
+
+        # Scaling + transformation
+        if info.get("mean") is not None:
+            skew = abs(info.get("skewness", 0))
+            if skew > 2:
+                transform[col] = {
+                    "transform": "log1p" if info.get("min", 0) >= 0 else "yeo-johnson",
+                    "skewness": info.get("skewness", 0)
+                }
+            scale[col] = {"scaler": info.get("scaling_suggestion", "StandardScaler"), "reason": f"skew={info.get('skewness',0):.2f}"}
+
+    total = len(df.columns) - (1 if target else 0)
+    dropped = len(drop_cols)
+    num_feats = len([c for c,i in fa.items() if i.get("mean") is not None and c != target])
+    cat_feats = len([c for c,i in fa.items() if i.get("mean") is None and c != target])
+
+    return {
+        "target_column": target,
+        "drop_columns": drop_cols,
+        "missing_value_strategy": impute,
+        "encoding_strategy": encode,
+        "scaling_strategy": scale,
+        "transformation_recommendations": transform,
+        "summary": {
+            "total_features": total,
+            "dropped": dropped,
+            "numeric_features": num_feats,
+            "categorical_features": cat_feats,
+            "columns_needing_imputation": len(impute),
+            "columns_needing_encoding": len(encode),
+            "columns_needing_scaling": len(scale),
+        }
+    }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 14. MODEL RECOMMENDATION
+# ══════════════════════════════════════════════════════════════════════════════
+
+def recommend_models(df: pd.DataFrame, target: Optional[str], task_type: str, training_results: dict) -> dict:
+    n = len(df)
+    is_clf = "classification" in task_type
+
+    # Class imbalance
+    imbalance = {"severity": "NONE", "ratio": 1.0}
+    if target and target in df.columns and is_clf:
+        vc = df[target].value_counts()
+        if len(vc) >= 2:
+            ratio = safe_float(vc.iloc[0] / vc.iloc[-1])
+            sev = "NONE" if ratio < 2 else "LOW" if ratio < 5 else "MODERATE" if ratio < 10 else "HIGH"
+            imbalance = {"severity": sev, "ratio": ratio}
+
+    best_model = training_results.get("best_model", "Random Forest")
+
+    models = []
+    if is_clf:
+        models = [
+            {"model": "Logistic Regression", "priority": "baseline", "why": "Fast, interpretable, great for linearly separable data."},
+            {"model": "Random Forest", "priority": "recommended", "why": "Robust, handles non-linearity, low tuning required."},
+            {"model": "Gradient Boosting (XGBoost/LightGBM)", "priority": "advanced", "why": "State-of-the-art tabular performance — tune carefully."},
+        ]
+        if imbalance["severity"] in ["MODERATE","HIGH"]:
+            models.append({"model": "Balanced Random Forest", "priority": "recommended", "why": "Handles class imbalance natively."})
+    else:
+        models = [
+            {"model": "Ridge Regression", "priority": "baseline", "why": "Stable, regularized, interpretable."},
+            {"model": "Random Forest Regressor", "priority": "recommended", "why": "Captures non-linear relationships without scaling."},
+            {"model": "Gradient Boosting Regressor", "priority": "advanced", "why": "Best accuracy on complex tabular data."},
+        ]
+
+    return {
+        "task_type": "classification" if is_clf else "regression",
+        "best_from_training": best_model,
+        "recommended_models": models,
+        "class_imbalance": imbalance,
+        "evaluation_metrics": {
+            "primary": "F1-Weighted (classification)" if is_clf else "R² Score (regression)",
+            "secondary": "AUC-ROC" if is_clf else "RMSE",
+        },
+        "dataset_size_note": "Small dataset — use cross-validation, avoid deep trees." if n < 500 else
+                             "Medium dataset — standard ML pipeline works well." if n < 10000 else
+                             "Large dataset — consider LightGBM / subsampling."
+    }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 15. EXPLAINABILITY REPORT (issues + scoring)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def generate_explainability_report(result: dict) -> dict:
+    issues = []
+
+    dq = result.get("dataset_quality_score", {})
+    ds = result.get("dataset_summary", {})
+    fa = result.get("feature_analysis", {})
+    corr = result.get("correlation_analysis", {})
+    leakage = result.get("data_leakage_analysis", {})
+    anomaly = result.get("anomaly_detection", {})
+    fair = result.get("fair_assessment", {})
+
+    # Missing values
+    miss_pct = ds.get("missing_value_percent", 0)
+    if miss_pct > 30:
+        issues.append({"severity": "CRITICAL", "category": "Completeness", "title": f"High missing data ({miss_pct:.1f}%)",
+                       "explanation": "Over 30% of cells are missing — imputation will introduce significant bias.",
+                       "fix": "Drop columns >60% missing; use median/mode imputation for the rest. Consider MICE for MCAR data.",
+                       "source_module": "dataset_summary"})
+    elif miss_pct > 10:
+        issues.append({"severity": "HIGH", "category": "Completeness", "title": f"Moderate missing data ({miss_pct:.1f}%)",
+                       "explanation": "10–30% missing values can degrade model performance significantly.",
+                       "fix": "Impute numerics with median (skewed) or mean; categoricals with mode.",
+                       "source_module": "dataset_summary"})
+
+    # Duplicates
+    dups = ds.get("duplicate_rows", 0)
+    if dups > 0:
+        dup_pct = dups / ds.get("rows", 1) * 100
+        sev = "HIGH" if dup_pct > 5 else "MODERATE"
+        issues.append({"severity": sev, "category": "Uniqueness", "title": f"{dups} duplicate rows ({dup_pct:.1f}%)",
+                       "explanation": "Duplicate rows cause data leakage between train/test splits.",
+                       "fix": "df.drop_duplicates(inplace=True)",
+                       "source_module": "dataset_summary"})
+
+    # High missing columns
+    for col, info in fa.items():
+        if info.get("missing_percent", 0) > 50:
+            issues.append({"severity": "HIGH", "category": "Missing Values", "title": f"Column '{col}' is {info['missing_percent']:.0f}% missing",
+                           "explanation": "Columns with >50% missing data are rarely informative after imputation.",
+                           "fix": f"df.drop(columns=['{col}'])",
+                           "source_module": "feature_analysis"})
+        if info.get("unique_values", 0) <= 1 and col != result.get("target_detection", {}).get("final_target"):
+            issues.append({"severity": "MODERATE", "category": "Feature Quality", "title": f"Column '{col}' has zero variance",
+                           "explanation": "Constant columns add no predictive signal.",
+                           "fix": f"df.drop(columns=['{col}'])",
+                           "source_module": "feature_analysis"})
+
+    # Correlations
+    for pair in corr.get("strong_correlation_pairs", []):
+        if abs(pair["pearson"]) > 0.9:
+            issues.append({"severity": "HIGH", "category": "Multicollinearity", "title": f"'{pair['feature_1']}' ↔ '{pair['feature_2']}' corr={pair['pearson']:.2f}",
+                           "explanation": "Near-collinear features cause model instability and weight inflation.",
+                           "fix": f"Drop one: df.drop(columns=['{pair['feature_2']}'])",
+                           "source_module": "correlation_analysis"})
+
+    # Leakage
+    for item in leakage.get("target_leakage", []):
+        issues.append({"severity": "CRITICAL", "category": "Data Leakage", "title": f"'{item['feature']}' may leak target",
+                       "explanation": item["reason"],
+                       "fix": f"Investigate and drop: df.drop(columns=['{item['feature']}'])",
+                       "source_module": "leakage_analysis"})
+
+    # Anomalies
+    if anomaly.get("severity") == "HIGH":
+        issues.append({"severity": "HIGH", "category": "Anomalies", "title": f"{anomaly['anomaly_percent']:.1f}% anomalous rows",
+                       "explanation": "High anomaly rate may indicate data collection errors or adversarial samples.",
+                       "fix": "Inspect and optionally remove anomalous rows using IsolationForest predictions.",
+                       "source_module": "anomaly_detection"})
+
+    # Class imbalance
+    cb_score = dq.get("dimension_scores", {}).get("class_balance", 100)
+    if cb_score < 60:
+        issues.append({"severity": "MODERATE", "category": "Class Balance", "title": "Significant class imbalance",
+                       "explanation": f"Class balance score: {cb_score:.0f}/100. Minority class under-represented.",
+                       "fix": "Use SMOTE oversampling, class_weight='balanced', or stratified sampling.",
+                       "source_module": "quality_score"})
+
+    # Adequacy
+    rows = ds.get("rows", 0)
+    cols = ds.get("columns", 0)
+    if rows / max(cols, 1) < 10:
+        issues.append({"severity": "MODERATE", "category": "Data Adequacy", "title": f"Low rows-to-features ratio ({rows}/{cols})",
+                       "explanation": "Less than 10 rows per feature increases overfitting risk substantially.",
+                       "fix": "Collect more data, perform feature selection, or use regularized models.",
+                       "source_module": "dataset_summary"})
+
+    # Skewness
+    skewed_cols = [col for col, info in fa.items() if abs(info.get("skewness", 0)) > 3]
+    if len(skewed_cols) > 3:
+        issues.append({"severity": "LOW", "category": "Feature Distribution", "title": f"{len(skewed_cols)} highly skewed features",
+                       "explanation": "Extreme skewness degrades linear model performance.",
+                       "fix": "Apply log1p or Yeo-Johnson transformation to skewed features.",
+                       "source_module": "feature_analysis"})
+
+    # Score
+    overall_q = dq.get("overall_score", 70)
+    n_crit = sum(1 for i in issues if i["severity"] == "CRITICAL")
+    n_high = sum(1 for i in issues if i["severity"] == "HIGH")
+    readiness = overall_q - n_crit * 12 - n_high * 5
+    readiness = max(10.0, min(100.0, readiness))
+
+    grade = "A" if readiness >= 90 else "B" if readiness >= 75 else "C" if readiness >= 60 else "D" if readiness >= 45 else "F"
+
+    # Module health
+    module_health = {
+        "completeness":   {"status": "CLEAN" if miss_pct < 5 else "ISSUES", "issues_found": 1 if miss_pct >= 5 else 0},
+        "uniqueness":     {"status": "CLEAN" if dups == 0 else "ISSUES", "issues_found": 1 if dups > 0 else 0},
+        "correlation":    {"status": "CLEAN" if len(corr.get("strong_correlation_pairs",[])) == 0 else "ISSUES", "issues_found": len(corr.get("strong_correlation_pairs",[]))},
+        "leakage":        {"status": "CLEAN" if len(leakage.get("target_leakage",[])) == 0 else "ISSUES", "issues_found": len(leakage.get("target_leakage",[]))},
+        "anomaly":        {"status": "CLEAN" if anomaly.get("anomaly_percent",0) < 5 else "ISSUES", "issues_found": 1 if anomaly.get("anomaly_percent",0) >= 5 else 0},
+        "fair":           {"status": "CLEAN" if fair.get("overall_fair_score",0) >= 75 else "ISSUES", "issues_found": len(fair.get("issues_found",{}))},
+        "class_balance":  {"status": "CLEAN" if cb_score >= 70 else "ISSUES", "issues_found": 0 if cb_score >= 70 else 1},
+        "feature_quality":{"status": "CLEAN" if len(skewed_cols) <= 3 else "ISSUES", "issues_found": len(skewed_cols)},
+    }
+
+    positive_signals = []
+    if miss_pct < 2:     positive_signals.append("Near-complete dataset — minimal missing values.")
+    if dups == 0:         positive_signals.append("No duplicate rows detected.")
+    if len(corr.get("strong_correlation_pairs",[])) == 0: positive_signals.append("No multicollinearity issues found.")
+    if len(leakage.get("target_leakage",[])) == 0:        positive_signals.append("No data leakage detected.")
+    if anomaly.get("anomaly_percent",5) < 2:              positive_signals.append("Anomaly rate is very low.")
+    if readiness >= 80:   positive_signals.append(f"Strong ML readiness score: {readiness:.0f}/100.")
+
+    issues.sort(key=lambda x: {"CRITICAL":0,"HIGH":1,"MODERATE":2,"LOW":3}.get(x["severity"],4))
+
+    action_plan = [{"step": i+1, "priority": iss["severity"], "reason": iss["title"], "module": iss["source_module"]}
+                   for i, iss in enumerate(issues[:10])]
+
+    return {
+        "readiness_score": round(readiness, 1),
+        "grade": grade,
+        "verdict": "Dataset is ML-ready" if readiness >= 75 else "Dataset needs preprocessing before ML",
+        "issue_summary": {
+            "CRITICAL": n_crit,
+            "HIGH": n_high,
+            "MODERATE": sum(1 for i in issues if i["severity"] == "MODERATE"),
+            "LOW": sum(1 for i in issues if i["severity"] == "LOW"),
+        },
+        "issues": issues,
+        "action_plan": action_plan,
+        "positive_signals": positive_signals,
+        "module_health": module_health,
+    }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# MASTER ANALYSIS RUNNER
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _run_full_analysis(df: pd.DataFrame, target_column: Optional[str] = None) -> dict:
+    result = {}
+
+    result["dataset_summary"]      = get_dataset_summary(df)
+    result["target_detection"]     = detect_target_column(df, user_specified=target_column)
+    final_target                   = result["target_detection"]["final_target"]
+    task_type                      = result["target_detection"]["task_type"]
+
+    result["feature_analysis"]     = analyze_features(df, target=final_target)
+    result["dataset_quality_score"]= calculate_quality_score(df, target=final_target)
+    result["correlation_analysis"] = analyze_correlations(df, target=final_target)
+    result["data_leakage_analysis"]= analyze_leakage(df, target=final_target)
+    result["anomaly_detection"]    = detect_anomalies(df, target=final_target)
+    result["fair_assessment"]      = assess_fair(df, target=final_target)
+    result["auto_training_results"]= run_auto_training(df, final_target, task_type)
+    result["cross_validation"]     = analyze_cv_stability(result["auto_training_results"])
+    result["feature_importance"]   = compute_feature_importance(df, final_target, task_type)
+    result["overfitting_analysis"] = analyze_overfitting(df, final_target, task_type)
+    result["recommended_pipeline"] = build_pipeline(df, final_target, result["feature_analysis"])
+    result["model_recommendation"] = recommend_models(df, final_target, task_type, result["auto_training_results"])
+    result["explainability_report"]= generate_explainability_report(result)
+
+    return result
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# API ENDPOINTS
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _load_df(file: UploadFile, contents: bytes) -> pd.DataFrame:
+    name = (file.filename or "").lower()
+    if name.endswith(".csv"):
+        return pd.read_csv(io.BytesIO(contents))
+    elif name.endswith((".xlsx",".xls")):
+        return pd.read_excel(io.BytesIO(contents))
+    else:
+        # Try CSV first
         try:
-            df = _load_df(f.file, f.filename)
-            datasets.append({"name": f.filename.rsplit(".", 1)[0], "dataframe": df})
-        except Exception as e:
-            datasets.append({"name": f.filename, "dataframe": None, "error": str(e)})
-
-    result = run_benchmark(datasets)
-    return JSONResponse(content=clean_for_json(result))
+            return pd.read_csv(io.BytesIO(contents))
+        except:
+            return pd.read_excel(io.BytesIO(contents))
 
 
-# ── ENDPOINT 4: PDF REPORT ────────────────────────────────────────────────────
-@app.post("/report", tags=["Analysis"])
-async def generate_report(
+@app.get("/health")
+def health():
+    return {"status": "ok", "version": "4.0"}
+
+
+@app.post("/upload")
+async def upload_and_analyze(
     file: UploadFile = File(...),
-    target_column: str = Query(default=None)
+    target_column: Optional[str] = Query(default=None),
 ):
-    """Full analysis + professional PDF download."""
     try:
-        df = _load_df(file.file, file.filename)
-        df, err = _validate_df(df, file.filename)
-        if err: return err
+        contents = await file.read()
+        df = _load_df(file, contents)
+        if df.empty:
+            raise HTTPException(400, "Uploaded file is empty.")
+        if len(df) < 5:
+            raise HTTPException(400, "Dataset too small (< 5 rows).")
+        result = _run_full_analysis(df, target_column=target_column)
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"Analysis failed: {e}")
 
-        analysis, _ = _run_full_analysis(df, target_column, file.filename)
-        if isinstance(analysis, dict) and "error" in analysis:
-            return JSONResponse(analysis, status_code=400)
 
-        base = file.filename.rsplit(".", 1)[0]
-        pdf_bytes = generate_pdf_report(analysis, filename=base)
-        er = analysis.get("explainability_report", {})
+@app.post("/execute")
+async def execute_pipeline(file: UploadFile = File(...)):
+    """Apply the pipeline and return a cleaned CSV."""
+    from app.prepare import prepare_ml_dataset
+    try:
+        contents = await file.read()
+        df = _load_df(file, contents)
+        cleaned = prepare_ml_dataset(df)
+        buf = io.StringIO()
+        cleaned.to_csv(buf, index=False)
+        buf.seek(0)
+        headers = {
+            "X-Final-Shape": f"{cleaned.shape[0]}x{cleaned.shape[1]}",
+            "X-Steps-Applied": "Drop,Impute,Encode,Scale",
+            "Content-Disposition": f'attachment; filename="cleaned.csv"',
+        }
+        return StreamingResponse(io.BytesIO(buf.getvalue().encode()), media_type="text/csv", headers=headers)
+    except Exception as e:
+        raise HTTPException(500, {"error": str(e)})
+
+
+@app.post("/whatif")
+async def what_if(file: UploadFile = File(...)):
+    """Simulate step-by-step fixes and score impact."""
+    from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
+    from sklearn.model_selection import cross_val_score, StratifiedKFold, KFold
+    from sklearn.impute import SimpleImputer
+    from sklearn.preprocessing import LabelEncoder
+    import warnings; warnings.filterwarnings("ignore")
+
+    try:
+        contents = await file.read()
+        df = _load_df(file, contents)
+        td = detect_target_column(df)
+        target = td["final_target"]
+        task_type = td["task_type"]
+        is_clf = "classification" in task_type
+
+        def quick_score(d):
+            try:
+                X, y = _prepare_for_ml(d, target)
+                if len(X) < 10: return 0.0
+                model = (RandomForestClassifier(n_estimators=40, max_depth=6, random_state=42, n_jobs=-1)
+                         if is_clf else
+                         RandomForestRegressor(n_estimators=40, max_depth=6, random_state=42, n_jobs=-1))
+                cv = StratifiedKFold(3, shuffle=True, random_state=42) if is_clf else KFold(3, shuffle=True, random_state=42)
+                metric = "f1_weighted" if is_clf else "r2"
+                s = cross_val_score(model, X, y, cv=cv, scoring=metric, n_jobs=-1)
+                return safe_float(s.mean())
+            except:
+                return 0.0
+
+        steps = []
+        current = df.copy()
+        base = quick_score(current)
+        steps.append({"step": 0, "fix_applied": "Baseline (no changes)", "score": base, "delta": 0.0, "impact": "NEUTRAL"})
+
+        # Step 1: drop duplicates
+        prev_score = base
+        current = current.drop_duplicates()
+        s = quick_score(current)
+        delta = s - prev_score
+        steps.append({"step": 1, "fix_applied": "Drop duplicate rows", "score": s, "delta": delta,
+                      "impact": "POSITIVE" if delta > 0.005 else "NEGATIVE" if delta < -0.005 else "NEUTRAL"})
+        prev_score = s
+
+        # Step 2: drop high-missing columns
+        drop_cols = [c for c in current.columns if current[c].isnull().mean() > 0.6 and c != target]
+        if drop_cols:
+            current = current.drop(columns=drop_cols)
+        s = quick_score(current)
+        delta = s - prev_score
+        steps.append({"step": 2, "fix_applied": f"Drop {len(drop_cols)} high-missing column(s)", "score": s, "delta": delta,
+                      "impact": "POSITIVE" if delta > 0.005 else "NEGATIVE" if delta < -0.005 else "NEUTRAL"})
+        prev_score = s
+
+        # Step 3: impute
+        for col in current.select_dtypes(include=["float64","int64"]).columns:
+            if col == target: continue
+            if current[col].isnull().any():
+                current[col].fillna(current[col].median(), inplace=True)
+        for col in current.select_dtypes(include=["object"]).columns:
+            if col == target: continue
+            if current[col].isnull().any():
+                current[col].fillna(current[col].mode()[0] if len(current[col].mode()) > 0 else "Unknown", inplace=True)
+        s = quick_score(current)
+        delta = s - prev_score
+        steps.append({"step": 3, "fix_applied": "Impute missing values (median/mode)", "score": s, "delta": delta,
+                      "impact": "POSITIVE" if delta > 0.005 else "NEGATIVE" if delta < -0.005 else "NEUTRAL"})
+        prev_score = s
+
+        # Step 4: log-transform skewed
+        import warnings; warnings.filterwarnings("ignore")
+        for col in current.select_dtypes(include=["float64","int64"]).columns:
+            if col == target: continue
+            if current[col].min() >= 0 and abs(current[col].skew()) > 2:
+                current[col] = np.log1p(current[col])
+        s = quick_score(current)
+        delta = s - prev_score
+        steps.append({"step": 4, "fix_applied": "Log-transform highly skewed features", "score": s, "delta": delta,
+                      "impact": "POSITIVE" if delta > 0.005 else "NEGATIVE" if delta < -0.005 else "NEUTRAL"})
+
+        final = steps[-1]["score"]
+        total_imp = final - base
+        verdict = (f"Fixes improved model score by {total_imp:+.3f} ({base:.3f} → {final:.3f})." if total_imp > 0.01
+                   else f"Score relatively stable. Dataset may already be clean ({base:.3f} → {final:.3f}).")
+
+        return {"baseline_score": base, "final_score": final, "total_improvement": total_imp, "verdict": verdict, "steps": steps}
+
+    except Exception as e:
+        raise HTTPException(500, {"error": str(e)})
+
+
+@app.post("/automl")
+async def automl(file: UploadFile = File(...)):
+    """Grid-search over preprocessing + model combos."""
+    from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor, GradientBoostingClassifier, GradientBoostingRegressor, VotingClassifier, VotingRegressor
+    from sklearn.linear_model import LogisticRegression, Ridge
+    from sklearn.model_selection import cross_val_score, StratifiedKFold, KFold
+    from sklearn.preprocessing import StandardScaler
+    from sklearn.pipeline import Pipeline
+    import warnings; warnings.filterwarnings("ignore")
+
+    try:
+        t_start = time.time()
+        contents = await file.read()
+        df = _load_df(file, contents)
+        td = detect_target_column(df)
+        target = td["final_target"]
+        task_type = td["task_type"]
+        is_clf = "classification" in task_type
+
+        X, y = _prepare_for_ml(df, target)
+        if len(X) < 10:
+            return {"error": "Too few rows"}
+
+        n_splits = min(5, max(2, len(X) // 20))
+        cv = StratifiedKFold(n_splits, shuffle=True, random_state=42) if is_clf else KFold(n_splits, shuffle=True, random_state=42)
+        metric = "f1_weighted" if is_clf else "r2"
+
+        configs = []
+
+        if is_clf:
+            base_models = [
+                ("LR", LogisticRegression(max_iter=500, C=1.0, random_state=42)),
+                ("RF_shallow", RandomForestClassifier(n_estimators=50, max_depth=5, random_state=42, n_jobs=-1)),
+                ("RF_deep",    RandomForestClassifier(n_estimators=80, max_depth=10, random_state=42, n_jobs=-1)),
+                ("GB",         GradientBoostingClassifier(n_estimators=80, max_depth=4, learning_rate=0.1, random_state=42)),
+            ]
+        else:
+            base_models = [
+                ("Ridge_low",  Ridge(alpha=0.1)),
+                ("Ridge_high", Ridge(alpha=10.0)),
+                ("RF_shallow", RandomForestRegressor(n_estimators=50, max_depth=5, random_state=42, n_jobs=-1)),
+                ("RF_deep",    RandomForestRegressor(n_estimators=80, max_depth=10, random_state=42, n_jobs=-1)),
+                ("GB",         GradientBoostingRegressor(n_estimators=80, max_depth=4, learning_rate=0.1, random_state=42)),
+            ]
+
+        impute_strategies = ["median", "mean"]
+
+        from sklearn.impute import SimpleImputer
+        import copy
+
+        for imp_strat in impute_strategies:
+            imp = SimpleImputer(strategy=imp_strat)
+            X_imp = pd.DataFrame(imp.fit_transform(X), columns=X.columns)
+
+            for log_transform in [False, True]:
+                X_proc = X_imp.copy()
+                if log_transform:
+                    for col in X_proc.columns:
+                        if X_proc[col].min() >= 0 and abs(X_proc[col].skew()) > 1.5:
+                            X_proc[col] = np.log1p(X_proc[col])
+
+                for use_scaler in [False, True]:
+                    X_final = X_proc.copy()
+                    scaler_name = "StandardScaler" if use_scaler else "None"
+                    if use_scaler:
+                        sc = StandardScaler()
+                        X_final = pd.DataFrame(sc.fit_transform(X_final), columns=X_final.columns)
+
+                    for name, model in base_models:
+                        try:
+                            scores = cross_val_score(model, X_final, y, cv=cv, scoring=metric, n_jobs=-1)
+                            configs.append({
+                                "model": name, "score": safe_float(scores.mean()),
+                                "std": safe_float(scores.std()),
+                                "impute_strategy": imp_strat,
+                                "log_transform": log_transform,
+                                "scaler": scaler_name,
+                                "is_ensemble": False,
+                                "preprocessing": f"{imp_strat}+{'log+' if log_transform else ''}{scaler_name}",
+                            })
+                        except:
+                            pass
+
+        # Ensemble (voting) with best preprocessing
+        try:
+            best_prep = max(configs, key=lambda x: x["score"])
+            if is_clf:
+                ens = VotingClassifier([("lr", LogisticRegression(max_iter=500)), ("rf", RandomForestClassifier(n_estimators=60, random_state=42, n_jobs=-1)), ("gb", GradientBoostingClassifier(n_estimators=60, random_state=42))], voting="soft")
+            else:
+                ens = VotingRegressor([("ridge", Ridge()), ("rf", RandomForestRegressor(n_estimators=60, random_state=42, n_jobs=-1)), ("gb", GradientBoostingRegressor(n_estimators=60, random_state=42))])
+
+            imp2 = SimpleImputer(strategy=best_prep["impute_strategy"])
+            X_e = pd.DataFrame(imp2.fit_transform(X), columns=X.columns)
+            ens_scores = cross_val_score(ens, X_e, y, cv=cv, scoring=metric, n_jobs=-1)
+            configs.append({
+                "model": "Voting Ensemble", "score": safe_float(ens_scores.mean()),
+                "std": safe_float(ens_scores.std()),
+                "impute_strategy": best_prep["impute_strategy"],
+                "log_transform": False, "scaler": "None", "is_ensemble": True,
+                "preprocessing": f"voting_ensemble_{best_prep['impute_strategy']}",
+            })
+        except:
+            pass
+
+        configs.sort(key=lambda x: -x["score"])
+        best = configs[0] if configs else {}
+
+        return {
+            "best_configuration": best,
+            "top_10_configurations": configs[:10],
+            "total_configurations_tested": len(configs),
+            "total_time_seconds": round(time.time() - t_start, 1),
+        }
+    except Exception as e:
+        raise HTTPException(500, {"error": str(e)})
+
+
+@app.post("/shap")
+async def shap_analysis(file: UploadFile = File(...)):
+    """SHAP global feature importance."""
+    try:
+        import shap
+        contents = await file.read()
+        df = _load_df(file, contents)
+        td = detect_target_column(df)
+        target = td["final_target"]
+        task_type = td["task_type"]
+        is_clf = "classification" in task_type
+
+        X, y = _prepare_for_ml(df, target)
+        if len(X) < 10:
+            return {"status": "error", "error": "Too few rows"}
+
+        from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
+        model = (RandomForestClassifier(n_estimators=60, max_depth=8, random_state=42, n_jobs=-1)
+                 if is_clf else
+                 RandomForestRegressor(n_estimators=60, max_depth=8, random_state=42, n_jobs=-1))
+        X_sample = X.iloc[:min(200, len(X))]
+        model.fit(X, y)
+
+        explainer = shap.TreeExplainer(model)
+        shap_vals = explainer.shap_values(X_sample)
+
+        if isinstance(shap_vals, list):
+            shap_mean = np.mean([np.abs(sv).mean(axis=0) for sv in shap_vals], axis=0)
+        else:
+            shap_mean = np.abs(shap_vals).mean(axis=0)
+
+        importance = {col: safe_float(val) for col, val in zip(X.columns, shap_mean)}
+        importance = dict(sorted(importance.items(), key=lambda x: -x[1]))
+
+        top_feat = list(importance.keys())[0] if importance else "N/A"
+        return {
+            "status": "completed",
+            "model_used": "RandomForest",
+            "n_samples_analyzed": len(X_sample),
+            "global_feature_importance": importance,
+            "shap_summary": f"Top feature: '{top_feat}' with mean |SHAP|={list(importance.values())[0]:.4f}.",
+            "research_note": "SHAP TreeExplainer. Values represent mean absolute SHAP attribution.",
+        }
+    except ImportError:
+        # Fallback without SHAP
+        try:
+            contents = await file.read()
+            df = _load_df(file, contents)
+            td = detect_target_column(df)
+            target = td["final_target"]
+            task_type = td["task_type"]
+            X, y = _prepare_for_ml(df, target)
+            from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
+            is_clf = "classification" in task_type
+            model = (RandomForestClassifier(n_estimators=60, random_state=42, n_jobs=-1) if is_clf else RandomForestRegressor(n_estimators=60, random_state=42, n_jobs=-1))
+            model.fit(X, y)
+            importance = {col: safe_float(val) for col, val in sorted(zip(X.columns, model.feature_importances_), key=lambda x: -x[1])}
+            top_feat = list(importance.keys())[0] if importance else "N/A"
+            return {
+                "status": "completed", "model_used": "RandomForest (RF importance — SHAP not installed)",
+                "n_samples_analyzed": len(X),
+                "global_feature_importance": importance,
+                "shap_summary": f"Top feature: '{top_feat}'. (Install 'shap' for true SHAP values.)",
+                "research_note": "Using RF feature_importances_ as SHAP approximation.",
+            }
+        except Exception as e:
+            return {"status": "error", "error": str(e)}
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+@app.post("/nlreport")
+async def nl_report(file: UploadFile = File(...), format: str = Query(default="text")):
+    """Generate a human-readable plain-English report."""
+    try:
+        contents = await file.read()
+        df = _load_df(file, contents)
+        result = _run_full_analysis(df)
+        er = result["explainability_report"]
+        ds = result["dataset_summary"]
+        td = result["target_detection"]
+        dq = result["dataset_quality_score"]
+        at = result["auto_training_results"]
+        fi = result["feature_importance"]
+
+        lines = [
+            "=" * 70,
+            "  ML DATA READINESS REPORT",
+            f"  Generated by ML Data Readiness Analyzer v4.0",
+            "=" * 70,
+            "",
+            "EXECUTIVE SUMMARY",
+            "-" * 40,
+            f"Readiness Score: {er['readiness_score']}/100 (Grade {er['grade']})",
+            f"Verdict:         {er['verdict']}",
+            f"Dataset:         {ds['rows']:,} rows × {ds['columns']} columns",
+            f"Target:          {td['final_target']} ({td['task_type']})",
+            f"Quality:         {dq['status']} ({dq['overall_score']}/100)",
+            "",
+            "DATA QUALITY BREAKDOWN",
+            "-" * 40,
+        ]
+        for dim, score in dq["dimension_scores"].items():
+            bar = "█" * int(score // 10) + "░" * (10 - int(score // 10))
+            lines.append(f"  {dim:<20} {bar}  {score:.0f}/100")
+
+        lines += ["", "ISSUES FOUND", "-" * 40]
+        if er["issues"]:
+            for iss in er["issues"]:
+                lines.append(f"  [{iss['severity']}] {iss['title']}")
+                lines.append(f"    → {iss['explanation']}")
+                lines.append(f"    FIX: {iss['fix']}")
+                lines.append("")
+        else:
+            lines.append("  No critical issues found.")
+
+        lines += ["", "ACTION PLAN", "-" * 40]
+        for act in er["action_plan"]:
+            lines.append(f"  {act['step']}. [{act['priority']}] {act['reason']}")
+
+        lines += ["", "MODEL PERFORMANCE", "-" * 40]
+        best = at.get("best_model", "N/A")
+        lines.append(f"  Best model: {best}")
+        for name, r in at.get("model_comparison", {}).items():
+            if "error" not in r:
+                score_key = "f1_weighted" if "classification" in at.get("task_type","") else "r2_score"
+                lines.append(f"  {name:<30} {r.get(score_key,0):.4f}")
+
+        if fi.get("ranking_by_rf_importance"):
+            lines += ["", "TOP FEATURES", "-" * 40]
+            for feat in fi["ranking_by_rf_importance"][:8]:
+                lines.append(f"  {feat['feature']:<30} {feat['rf_importance']:.4f}  [{feat['tier']}]")
+
+        lines += ["", "=" * 70, "  END OF REPORT", "=" * 70]
+        report_text = "\n".join(lines)
 
         return StreamingResponse(
-            io.BytesIO(pdf_bytes),
-            media_type="application/pdf",
-            headers={
-                "Content-Disposition": f"attachment; filename={base}_readiness_report.pdf",
-                "X-Readiness-Score":   str(er.get("readiness_score", 0)),
-                "X-Grade":             er.get("grade", "?")
-            }
+            io.BytesIO(report_text.encode()),
+            media_type="text/plain",
+            headers={"Content-Disposition": "attachment; filename=ml_report.txt"}
         )
     except Exception as e:
-        logger.error(f"POST /report error: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+        raise HTTPException(500, {"error": str(e)})
 
 
-# ── ENDPOINT 5: COMPARE (DRIFT) ───────────────────────────────────────────────
-@app.post("/compare", tags=["Analysis"])
-async def compare_train_test(
-    train_file: UploadFile = File(...),
-    test_file: UploadFile = File(...)
-):
-    """Distribution drift detection: KS test + PSI + Jensen-Shannon."""
-    try:
-        train_df = _load_df(train_file.file, train_file.filename)
-        test_df  = _load_df(test_file.file,  test_file.filename)
-
-        if train_df is None: return JSONResponse({"error": f"Unsupported: {train_file.filename}"}, status_code=400)
-        if test_df  is None: return JSONResponse({"error": f"Unsupported: {test_file.filename}"},  status_code=400)
-        if train_df.empty:   return JSONResponse({"error": "Train dataset is empty."},              status_code=400)
-        if test_df.empty:    return JSONResponse({"error": "Test dataset is empty."},               status_code=400)
-
-        common = set(train_df.columns) & set(test_df.columns)
-        if not common:
-            return JSONResponse({
-                "error": "No common columns between files.",
-                "train_columns": train_df.columns.tolist(),
-                "test_columns":  test_df.columns.tolist()
-            }, status_code=400)
-
-        result = compare_datasets(train_df, test_df)
-        result["file_info"] = {
-            "train_file":    train_file.filename,
-            "test_file":     test_file.filename,
-            "train_shape":   {"rows": int(train_df.shape[0]), "columns": int(train_df.shape[1])},
-            "test_shape":    {"rows": int(test_df.shape[0]),  "columns": int(test_df.shape[1])},
-            "common_columns": len(common)
-        }
-        return JSONResponse(content=clean_for_json(result))
-    except Exception as e:
-        logger.error(f"POST /compare error: {traceback.format_exc()}")
-        return JSONResponse({"error": str(e), "traceback": traceback.format_exc()[-800:]}, status_code=500)
+# Sample datasets endpoint
+from app.sample_datasets import router as sample_router
+app.include_router(sample_router)
 
 
-# ── ENDPOINT 6: WHAT-IF ───────────────────────────────────────────────────────
-@app.post("/whatif", tags=["Analysis"])
-async def whatif_simulation(
-    file: UploadFile = File(...),
-    target_column: str = Query(default=None)
-):
-    """What-If Simulator: measure improvement from each data fix."""
-    try:
-        df = _load_df(file.file, file.filename)
-        df, err = _validate_df(df, file.filename)
-        if err: return err
-        if len(df) < 20: return JSONResponse({"error": "Need at least 20 rows."}, status_code=400)
-
-        td = detect_target_column(df)
-        target = target_column if (target_column and target_column in df.columns) else td["predicted_target"]
-        task = _detect_task(df, target)
-
-        result = run_whatif_simulation(df, target, task, [])
-        return JSONResponse(content=clean_for_json(result))
-    except Exception as e:
-        logger.error(f"POST /whatif error: {e}")
-        return JSONResponse({"error": str(e), "traceback": traceback.format_exc()[-800:]}, status_code=500)
-
-
-# ── ENDPOINT 7: NATURAL LANGUAGE REPORT ──────────────────────────────────────
-@app.post("/nlreport", tags=["Analysis"])
-async def nl_report(
-    file: UploadFile = File(...),
-    target_column: str = Query(default=None),
-    format: str = Query(default="json", description="json or text")
-):
-    """Natural language explanation of every ML finding."""
-    try:
-        df = _load_df(file.file, file.filename)
-        df, err = _validate_df(df, file.filename)
-        if err: return err
-
-        analysis, _ = _run_full_analysis(df, target_column, file.filename)
-        if isinstance(analysis, dict) and "error" in analysis:
-            return JSONResponse(analysis, status_code=400)
-
-        base = file.filename.rsplit(".", 1)[0]
-        nl_result = generate_nl_report(analysis, filename=base)
-
-        if format == "text":
-            return PlainTextResponse(nl_result.get("full_report", ""))
-        return JSONResponse(content=clean_for_json(nl_result))
-    except Exception as e:
-        return JSONResponse({"error": str(e), "traceback": traceback.format_exc()[-800:]}, status_code=500)
-
-
-# ── ENDPOINT 8: AUTOML ────────────────────────────────────────────────────────
-@app.post("/automl", tags=["Analysis"])
-async def automl_optimize(
-    file: UploadFile = File(...),
-    target_column: str = Query(default=None),
-    max_configs: int = Query(default=12, ge=6, le=24)
-):
-    """AutoML: tests ensemble combos, returns best pipeline."""
-    try:
-        df = _load_df(file.file, file.filename)
-        df, err = _validate_df(df, file.filename)
-        if err: return err
-        if len(df) < 20: return JSONResponse({"error": "Need at least 20 rows."}, status_code=400)
-
-        td = detect_target_column(df)
-        target = target_column if (target_column and target_column in df.columns) else td["predicted_target"]
-        task = _detect_task(df, target)
-
-        result = run_automl_optimization(df, target=target, task=task, max_configs=max_configs)
-        return JSONResponse(content=clean_for_json(result))
-    except Exception as e:
-        return JSONResponse({"error": str(e), "traceback": traceback.format_exc()[-800:]}, status_code=500)
-
-
-# ── ENDPOINT 9: SHAP ──────────────────────────────────────────────────────────
-@app.post("/shap", tags=["Analysis"])
-async def shap_explainability(
-    file: UploadFile = File(...),
-    target_column: str = Query(default=None),
-    max_samples: int = Query(default=200, ge=50, le=1000),
-    top_n_features: int = Query(default=10, ge=3, le=50)
-):
-    """SHAP explainability — why the model predicts what it predicts."""
-    try:
-        df = _load_df(file.file, file.filename)
-        df, err = _validate_df(df, file.filename)
-        if err: return err
-        if len(df) < 20: return JSONResponse({"error": "Need at least 20 rows."}, status_code=400)
-
-        td = detect_target_column(df)
-        target = target_column if (target_column and target_column in df.columns) else td["predicted_target"]
-        task = _detect_task(df, target)
-
-        result = run_shap_analysis(
-            df, target=target, task=task,
-            max_samples_for_shap=max_samples,
-            top_n_features=top_n_features
-        )
-        return JSONResponse(content=clean_for_json(result))
-    except Exception as e:
-        return JSONResponse({"error": str(e), "traceback": traceback.format_exc()[-800:]}, status_code=500)
-
-
-# ── LEGACY TEST ENDPOINTS (keep for backward compat) ─────────────────────────
-@app.get("/test-db", tags=["Meta"])
-def test_db():
-    try:
-        reports_collection.insert_one({"test": "working", "created_at": datetime.utcnow()})
-        return {"status": "MongoDB connected ✅"}
-    except Exception as e:
-        return JSONResponse({"status": "MongoDB error ❌", "error": str(e)}, status_code=500)
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000, reload=True)

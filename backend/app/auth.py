@@ -15,16 +15,19 @@ from jose import JWTError, jwt
 from pydantic import BaseModel, EmailStr, validator
 from bson import ObjectId
 
-from app.db import users_collection
+# ── LOCAL-READY DB IMPORT ─────────────────────────────────────────────────────
+try:
+    from app.db import users_collection
+except ImportError:
+    # Fallback if app structure is different
+    from db import users_collection
 
 logger = logging.getLogger(__name__)
 
-# ── Config ──────────────────────────────────────────────────────────────────
-SECRET_KEY = os.getenv("SECRET_KEY")
-if not SECRET_KEY:
-    raise ValueError("❌ SECRET_KEY environment variable is not set. Add it in Render → Environment.")
-
-ALGORITHM         = "HS256"
+# ── LOCAL-READY CONFIG ────────────────────────────────────────────────────────
+# Uses a default secret key if not set in environment
+SECRET_KEY = os.getenv("SECRET_KEY", "local_development_secret_key_1234567890")
+ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "10080"))  # 7 days default
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")

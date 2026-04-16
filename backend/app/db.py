@@ -1,29 +1,31 @@
 import os
+import logging
 from pymongo import MongoClient
 from pymongo.errors import ConnectionFailure, ServerSelectionTimeoutError
-import logging
 
 logger = logging.getLogger(__name__)
 
-MONGO_URL = os.getenv("MONGO_URL")
-
-if not MONGO_URL:
-    raise ValueError("❌ MONGO_URL environment variable is not set. Add it in Render → Environment.")
+# ── LOCAL-READY CONFIG ────────────────────────────────────────────────────────
+# Falls back to local MongoDB if environment variable is missing
+MONGO_URL = os.getenv("MONGO_URL", "mongodb://localhost:27017/")
 
 try:
     client = MongoClient(
         MONGO_URL,
-        serverSelectionTimeoutMS=5000,
-        connectTimeoutMS=10000,
+        serverSelectionTimeoutMS=2000, # Faster timeout for local
+        connectTimeoutMS=5000,
         socketTimeoutMS=30000,
         maxPoolSize=10,
         retryWrites=True,
     )
     # Verify connection on startup
     client.admin.command("ping")
-    logger.info("✅ MongoDB connected successfully")
+    logger.info(f"✅ MongoDB connected successfully to: {MONGO_URL.split('@')[-1] if '@' in MONGO_URL else MONGO_URL}")
 except (ConnectionFailure, ServerSelectionTimeoutError) as e:
     logger.error(f"❌ MongoDB connection failed: {e}")
+    logger.warning("⚠️ Make sure MongoDB is running locally or MONGO_URL is set.")
+    # In a real local dev, you might want to mock the DB here, 
+    # but usually, we just expect the user to have MongoDB installed.
     raise
 
 db = client["ml_analyzer"]
