@@ -9,7 +9,7 @@ Next-level upgrades:
   • Better error messages and logging
 """
 
-from fastapi import FastAPI, File, UploadFile, HTTPException, Query
+from fastapi import FastAPI, File, UploadFile, HTTPException, Query, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from typing import Optional
@@ -828,6 +828,69 @@ async def execute_pipeline(file: UploadFile = File(...)):
         raise HTTPException(500, {"error": str(e)})
 
 
+@app.post("/autofix")
+async def autofix_endpoint(file: UploadFile = File(...), target_column: Optional[str] = Query(default=None)):
+    """One-click auto fix pipeline. Applies cleaning and returns before/after accuracy."""
+    from app.prepare import autofix_dataset
+    from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
+    from sklearn.model_selection import cross_val_score, StratifiedKFold, KFold
+    import base64
+    import warnings; warnings.filterwarnings("ignore")
+    try:
+        contents = await file.read()
+        df = _load_df(file, contents)
+        td = detect_target_column(df, user_specified=target_column)
+        target = td["final_target"]
+        task_type = td["task_type"]
+        is_clf = "classification" in task_type
+
+        def quick_score(d):
+            try:
+                X, y = _prepare_for_ml(d, target)
+                if len(X) < 10: return 0.0
+                model = (RandomForestClassifier(n_estimators=40, max_depth=6, random_state=42, n_jobs=-1)
+                         if is_clf else RandomForestRegressor(n_estimators=40, max_depth=6, random_state=42, n_jobs=-1))
+                cv = StratifiedKFold(3, shuffle=True, random_state=42) if is_clf else KFold(3, shuffle=True, random_state=42)
+                return safe_float(cross_val_score(model, X, y, cv=cv, scoring="f1_weighted" if is_clf else "r2", n_jobs=-1).mean())
+            except: return 0.0
+
+        before_score = quick_score(df)
+        
+        # Apply the fix pipeline
+        cleaned_df, fixes = autofix_dataset(df, target)
+        
+        # We need to test the cleaned dataset. But quick_score calls _prepare_for_ml which does its own imputation and encoding.
+        # Since cleaned_df is already cleaned, we can just split X,y and score it directly.
+        def score_cleaned(d):
+            try:
+                X = d.drop(columns=[target])
+                y = d[target]
+                if len(X) < 10: return 0.0
+                model = (RandomForestClassifier(n_estimators=40, max_depth=6, random_state=42, n_jobs=-1)
+                         if is_clf else RandomForestRegressor(n_estimators=40, max_depth=6, random_state=42, n_jobs=-1))
+                cv = StratifiedKFold(3, shuffle=True, random_state=42) if is_clf else KFold(3, shuffle=True, random_state=42)
+                return safe_float(cross_val_score(model, X, y, cv=cv, scoring="f1_weighted" if is_clf else "r2", n_jobs=-1).mean())
+            except: return 0.0
+            
+        after_score = score_cleaned(cleaned_df)
+        
+        # Export to CSV string
+        buf = io.StringIO()
+        cleaned_df.to_csv(buf, index=False)
+        csv_content = buf.getvalue()
+
+        return {
+            "before_accuracy": before_score,
+            "after_accuracy": after_score,
+            "improvement": safe_float(after_score - before_score),
+            "fixes_applied": fixes,
+            "cleaned_csv": csv_content,
+            "metric": "F1-Weighted" if is_clf else "R2 Score"
+        }
+    except Exception as e:
+        raise HTTPException(500, {"error": str(e)})
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # API ENDPOINTS — ADVANCED TOOLS
 # ══════════════════════════════════════════════════════════════════════════════
@@ -904,6 +967,104 @@ async def what_if(file: UploadFile = File(...)):
         verdict = (f"Fixes improved model score by {total_imp:+.3f} ({base:.3f} → {final:.3f})." if total_imp > 0.01
                    else f"Score stable. Dataset may already be clean ({base:.3f} → {final:.3f}).")
         return {"baseline_score": base, "final_score": final, "total_improvement": total_imp, "verdict": verdict, "steps": steps}
+    except Exception as e:
+        raise HTTPException(500, {"error": str(e)})
+
+@app.post("/whatif-live")
+async def whatif_live(
+    file: UploadFile = File(...),
+    target_column: Optional[str] = Form(default=None),
+    remove_outliers: bool = Form(default=False),
+    drop_correlated: bool = Form(default=False),
+    balance_dataset: bool = Form(default=False)
+):
+    """Live interactive ML lab endpoint. Applies selected transformations and retrains."""
+    from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
+    from sklearn.model_selection import cross_val_score, StratifiedKFold, KFold
+    import warnings; warnings.filterwarnings("ignore")
+    try:
+        contents = await file.read()
+        df = _load_df(file, contents)
+        td = detect_target_column(df, user_specified=target_column)
+        target = td["final_target"]
+        task_type = td["task_type"]
+        is_clf = "classification" in task_type
+
+        def quick_score(d):
+            try:
+                X, y = _prepare_for_ml(d, target)
+                if len(X) < 10: return 0.0
+                model = (RandomForestClassifier(n_estimators=40, max_depth=6, random_state=42, n_jobs=-1)
+                         if is_clf else RandomForestRegressor(n_estimators=40, max_depth=6, random_state=42, n_jobs=-1))
+                cv = StratifiedKFold(3, shuffle=True, random_state=42) if is_clf else KFold(3, shuffle=True, random_state=42)
+                return safe_float(cross_val_score(model, X, y, cv=cv, scoring="f1_weighted" if is_clf else "r2", n_jobs=-1).mean())
+            except: return 0.0
+
+        base_score = quick_score(df)
+        fixes_applied = []
+        
+        # Apply requested fixes
+        if remove_outliers:
+            num_cols = df.select_dtypes(include=["float64", "int64"]).columns
+            outlier_rows = set()
+            for col in num_cols:
+                if col == target: continue
+                q1 = df[col].quantile(0.25)
+                q3 = df[col].quantile(0.75)
+                iqr = q3 - q1
+                lower_bound = q1 - 1.5 * iqr
+                upper_bound = q3 + 1.5 * iqr
+                outliers = df[(df[col] < lower_bound) | (df[col] > upper_bound)].index
+                outlier_rows.update(outliers)
+            
+            if outlier_rows:
+                n_outliers = len(outlier_rows)
+                if n_outliers / len(df) < 0.15:
+                    df = df.drop(index=list(outlier_rows)).reset_index(drop=True)
+                    fixes_applied.append(f"Removed {n_outliers} outlier rows (IQR).")
+                else:
+                    fixes_applied.append(f"Skipped removing {n_outliers} outliers (>15% of data).")
+
+        if drop_correlated:
+            num_cols = df.select_dtypes(include=["float64", "int64"]).columns
+            if len(num_cols) > 1:
+                corr_matrix = df[num_cols].corr().abs()
+                upper = corr_matrix.where(np.triu(np.ones(corr_matrix.shape), k=1).astype(bool))
+                to_drop = [column for column in upper.columns if any(upper[column] > 0.85)]
+                to_drop = [c for c in to_drop if c != target]
+                if to_drop:
+                    df = df.drop(columns=to_drop)
+                    fixes_applied.append(f"Dropped {len(to_drop)} highly correlated features (>0.85).")
+
+        if balance_dataset and is_clf:
+            if target in df.columns:
+                counts = df[target].value_counts()
+                max_count = counts.max()
+                balanced_dfs = []
+                for class_val, count in counts.items():
+                    class_df = df[df[target] == class_val]
+                    if count < max_count:
+                        # Oversample by duplication
+                        n_missing = max_count - count
+                        sampled = class_df.sample(n=n_missing, replace=True, random_state=42)
+                        balanced_dfs.append(pd.concat([class_df, sampled]))
+                    else:
+                        balanced_dfs.append(class_df)
+                df = pd.concat(balanced_dfs).sample(frac=1, random_state=42).reset_index(drop=True)
+                fixes_applied.append("Balanced dataset using random oversampling.")
+
+        if not fixes_applied:
+            fixes_applied.append("No specific transformations were applied.")
+
+        new_score = quick_score(df)
+        delta = new_score - base_score
+
+        return {
+            "baseline_score": base_score,
+            "final_score": new_score,
+            "total_improvement": delta,
+            "fixes_summary": fixes_applied
+        }
     except Exception as e:
         raise HTTPException(500, {"error": str(e)})
 

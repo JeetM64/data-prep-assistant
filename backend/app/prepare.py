@@ -78,3 +78,89 @@ def prepare_ml_dataset(df: pd.DataFrame) -> pd.DataFrame:
     df = df.fillna(0)
     df = df.select_dtypes(include=np.number)
     return df
+
+def autofix_dataset(df: pd.DataFrame, target: str) -> tuple[pd.DataFrame, list]:
+    """
+    Auto-cleaning engine that applies a full preprocessing pipeline.
+    Returns the cleaned DataFrame and a list of applied fixes (strings).
+    """
+    df = df.copy()
+    fixes = []
+    
+    # 1. Handle Missing Values
+    missing_before = df.isnull().sum().sum()
+    if missing_before > 0:
+        for col in df.columns:
+            if col == target: continue
+            if df[col].isnull().sum() == 0: continue
+            
+            if pd.api.types.is_numeric_dtype(df[col]):
+                val = df[col].median()
+                df[col] = df[col].fillna(val)
+            else:
+                mode = df[col].mode()
+                val = mode[0] if len(mode) > 0 else "Unknown"
+                df[col] = df[col].fillna(val)
+        fixes.append(f"Imputed {missing_before} missing values (Median for numerics, Mode for categoricals).")
+    
+    # 2. Outlier Removal (IQR on numeric columns)
+    num_cols = df.select_dtypes(include=["float64", "int64", "float32", "int32"]).columns
+    outlier_rows = set()
+    for col in num_cols:
+        if col == target: continue
+        q1 = df[col].quantile(0.25)
+        q3 = df[col].quantile(0.75)
+        iqr = q3 - q1
+        lower_bound = q1 - 1.5 * iqr
+        upper_bound = q3 + 1.5 * iqr
+        outliers = df[(df[col] < lower_bound) | (df[col] > upper_bound)].index
+        outlier_rows.update(outliers)
+    
+    if outlier_rows:
+        n_outliers = len(outlier_rows)
+        # Cap outlier removal to max 15% of dataset to avoid losing too much data
+        if n_outliers / len(df) < 0.15:
+            df = df.drop(index=list(outlier_rows)).reset_index(drop=True)
+            fixes.append(f"Removed {n_outliers} extreme outlier rows using IQR method.")
+        else:
+            fixes.append(f"Detected {n_outliers} outliers, but kept them to preserve dataset size (>15% of rows).")
+
+    # 3. Encoding
+    cat_cols = [c for c in df.columns if df[c].dtype == object and c != target]
+    encoded_cols = 0
+    dropped_cols = 0
+    if cat_cols:
+        from sklearn.preprocessing import LabelEncoder
+        for col in cat_cols:
+            u = df[col].nunique()
+            if u == 2:
+                vals = df[col].dropna().unique()
+                df[col] = df[col].map({vals[0]: 0, vals[1]: 1})
+                encoded_cols += 1
+            elif u <= 10:
+                df = pd.get_dummies(df, columns=[col], drop_first=True)
+                encoded_cols += 1
+            else:
+                df.drop(columns=[col], inplace=True)
+                dropped_cols += 1
+        
+        msg = f"Encoded {encoded_cols} categorical features."
+        if dropped_cols > 0:
+            msg += f" Dropped {dropped_cols} high-cardinality features."
+        fixes.append(msg)
+        
+    # Target encoding
+    if target in df.columns and (df[target].dtype == object or str(df[target].dtype) == 'category'):
+        from sklearn.preprocessing import LabelEncoder
+        df[target] = LabelEncoder().fit_transform(df[target].astype(str))
+        fixes.append("Label encoded target variable.")
+
+    # 4. Scaling
+    from sklearn.preprocessing import StandardScaler
+    features_to_scale = [c for c in df.select_dtypes(include=np.number).columns if c != target]
+    if features_to_scale:
+        sc = StandardScaler()
+        df[features_to_scale] = sc.fit_transform(df[features_to_scale])
+        fixes.append(f"Standardized {len(features_to_scale)} numeric features to mean=0, std=1.")
+        
+    return df, fixes
