@@ -2712,7 +2712,7 @@
     <!-- ── MODELS ─────────────────────────────────────────────────────────── -->
     <div class="pane" id="pane-models">
       <div class="card">
-        <div class="ch" id="models-head">Model Comparison</div>
+        <div class="ch" id="models-head" style="overflow-x:auto; white-space:nowrap; padding-bottom: 4px;">Model Comparison</div>
         <div class="cb" id="models-body"></div>
       </div>
       <div class="g2">
@@ -3507,9 +3507,11 @@
       const pm = cv?.per_model_stability || {};
       document.getElementById('cv-body').innerHTML = `
     <p class="muted" style="margin-bottom:10px">${cv?.cv_strategy} · ${cv?.cv_folds} folds</p>
+    <div style="overflow-x:auto">
     <table class="tbl"><thead><tr><th>Model</th><th>Mean</th><th>Std</th><th>CV%</th><th>Stability</th></tr></thead>
     <tbody>${Object.entries(pm).map(([nm, r]) => `<tr><td class="m">${nm}</td><td class="m">${r.mean_score?.toFixed(3)}</td><td class="m">${r.std_dev?.toFixed(3)}</td><td class="m">${r.coefficient_of_variation_pct?.toFixed(1)}%</td>
     <td><span class="badge ${r.stability === 'STABLE' ? 'bSTABLE' : r.stability === 'MODERATE' ? 'bMOD-stab' : 'bUNSTABLE'}">${r.stability}</span></td></tr>`).join('')}</tbody></table>
+    </div>
     <p style="margin-top:8px;font-size:11px;color:#16a34a">${cv?.dataset_stability_summary?.message || ''}</p>`;
 
       // ── Recommendation panel ────────────────────────────────────────────
